@@ -104,6 +104,24 @@ impl Gfx {
         }
     }
 
+    /// Largeur d'un texte sur une ligne.
+    pub fn text_width(&self, s: &str, family: Family, size: f32, weight: i32) -> f32 {
+        let Ok(format) = self.text_format(family, size, weight, Align::Left) else {
+            return 0.0;
+        };
+        let wide: Vec<u16> = s.encode_utf16().collect();
+        unsafe {
+            let Ok(layout) = self.dwrite.CreateTextLayout(&wide, &format, 10_000.0, 100.0) else {
+                return 0.0;
+            };
+            let mut m = DWRITE_TEXT_METRICS::default();
+            if layout.GetMetrics(&mut m).is_err() {
+                return 0.0;
+            }
+            m.widthIncludingTrailingWhitespace
+        }
+    }
+
     /// Format de texte. `size` est dans l'unité du contexte de dessin.
     pub fn text_format(&self, family: Family, size: f32, weight: i32, align: Align) -> Result<IDWriteTextFormat> {
         let (embedded, fallback) = match family {
@@ -388,21 +406,28 @@ impl Painter<'_> {
         }
     }
 
-    /// Largeur d'un texte sur une ligne.
-    pub fn text_width(&self, s: &str, family: Family, size: f32, weight: i32) -> f32 {
-        let Ok(format) = self.gfx.text_format(family, size, weight, Align::Left) else {
-            return 0.0;
+
+    /// Dessine `f` en le limitant à un rectangle arrondi.
+    pub fn with_rrect_clip(&self, r: RectF, radius: f32, f: impl FnOnce()) {
+        let rr = D2D1_ROUNDED_RECT { rect: rect(r), radiusX: radius, radiusY: radius };
+        let Ok(mask) = (unsafe { self.gfx.d2d_factory.CreateRoundedRectangleGeometry(&rr) }) else {
+            f();
+            return;
         };
-        let wide: Vec<u16> = s.encode_utf16().collect();
+        let params = D2D1_LAYER_PARAMETERS1 {
+            contentBounds: rect(r),
+            geometricMask: ManuallyDrop::new(mask.cast().ok()),
+            maskAntialiasMode: D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+            maskTransform: Matrix3x2::identity(),
+            opacity: 1.0,
+            opacityBrush: ManuallyDrop::new(None),
+            layerOptions: D2D1_LAYER_OPTIONS1_NONE,
+        };
         unsafe {
-            let Ok(layout) = self.gfx.dwrite.CreateTextLayout(&wide, &format, 10_000.0, 100.0) else {
-                return 0.0;
-            };
-            let mut m = DWRITE_TEXT_METRICS::default();
-            if layout.GetMetrics(&mut m).is_err() {
-                return 0.0;
-            }
-            m.widthIncludingTrailingWhitespace
+            self.ctx.PushLayer(&params, None);
+            f();
+            self.ctx.PopLayer();
+            drop(ManuallyDrop::into_inner(params.geometricMask));
         }
     }
 

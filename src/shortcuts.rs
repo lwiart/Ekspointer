@@ -253,10 +253,10 @@ impl Action {
     /// Libellé affiché dans les réglages.
     pub fn label(self) -> &'static str {
         match self {
-            Action::ToggleDraw => "Activer ou quitter le dessin",
-            Action::HoldDraw => "Dessiner tant que la touche est tenue",
+            Action::ToggleDraw => "Activer le dessin",
+            Action::HoldDraw => "Dessiner en maintenant",
             Action::ClearAll => "Tout effacer",
-            Action::ToggleHalo => "Activer ou couper le halo",
+            Action::ToggleHalo => "Afficher le halo",
             Action::ToolArrow => "Flèche",
             Action::ToolRect => "Rectangle",
             Action::ToolEllipse => "Ellipse",
@@ -512,7 +512,9 @@ mod tests {
         assert_eq!(Action::ToolArrow.label(), "Flèche");
         assert_eq!(Action::ClearAll.label(), "Tout effacer");
         assert_eq!(Action::Color(2).label(), "Couleur 3");
-        assert_eq!(Action::HoldDraw.label(), "Dessiner tant que la touche est tenue");
+        assert_eq!(Action::HoldDraw.label(), "Dessiner en maintenant");
+        assert_eq!(Action::ToggleDraw.label(), "Activer le dessin");
+        assert_eq!(Action::ToggleHalo.label(), "Afficher le halo");
     }
 
     #[test]

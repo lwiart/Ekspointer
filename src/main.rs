@@ -12,7 +12,13 @@ use std::path::PathBuf;
 use std::time::Instant;
 use win::gfx::Gfx;
 use win::overlay::Overlays;
-use win::{input, log, Msg};
+use ekspointer::ui::settings::conflict_message;
+use ekspointer::ui::toolbar::{self, Item};
+use win::panel::{PanelEvent, PanelId};
+use win::settings_view::{SettingsAction, SettingsView, CONFLICT_MS};
+use win::tray::{Tray, TrayCommand};
+use win::ui::{Ui, UiAction, TIP_DELAY_MS};
+use win::{autostart, input, log, Msg};
 use windows::core::{w, Result, PCWSTR};
 use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Dwm::DwmFlush;
@@ -27,6 +33,14 @@ const MUTEX_NAME: PCWSTR = w!("Ekspointer.Instance");
 const TIMER_DEADLINE: usize = 1;
 /// Minuteur de recalage du clavier pendant que la combinaison de maintien est tenue.
 const TIMER_RESYNC: usize = 2;
+/// Minuteur de la bulle d'aide de la barre d'outils.
+const TIMER_TOOLTIP: usize = 3;
+
+/// Minuteur d'effacement du message de conflit de raccourci.
+const TIMER_CONFLICT: usize = 4;
+
+/// Message diffusé par Windows quand l'Explorateur redémarre (0 tant qu'il n'est pas enregistré).
+static TASKBAR_CREATED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 /// Options de la ligne de commande.
 #[derive(Default)]
@@ -37,6 +51,9 @@ struct Args {
     capturable: bool,
     /// Demande à l'instance en cours de se fermer.
     quit: bool,
+    /// Met l'interface dans un état donné, pour les vérifications visuelles :
+    /// `popover`, `tooltip`, `settings`, `conflict`, `collapsed` ou `drawing`.
+    demo_ui: Option<String>,
 }
 
 fn parse_args() -> Args {
@@ -46,7 +63,11 @@ fn parse_args() -> Args {
             "--demo" => args.demo = true,
             "--capturable" => args.capturable = true,
             "--quit" => args.quit = true,
-            _ => {}
+            other => {
+                if let Some(name) = other.strip_prefix("--demo-ui=") {
+                    args.demo_ui = Some(name.to_string());
+                }
+            }
         }
     }
     args
@@ -66,6 +87,18 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
             }
             win::WM_APP_SHOW => {
                 win::post(Msg::ShowToolbar);
+                LRESULT(0)
+            }
+            win::WM_APP_TRAY => {
+                match (lparam.0 & 0xFFFF) as u32 {
+                    WM_LBUTTONUP => win::post(Msg::Tray(TrayCommand::ShowToolbar)),
+                    WM_RBUTTONUP | WM_CONTEXTMENU => win::post(Msg::Tray(TrayCommand::OpenMenu)),
+                    _ => {}
+                }
+                LRESULT(0)
+            }
+            m if m != 0 && m == TASKBAR_CREATED.load(std::sync::atomic::Ordering::Relaxed) => {
+                win::post(Msg::Tray(TrayCommand::Recreate));
                 LRESULT(0)
             }
             WM_CLOSE => {
@@ -112,8 +145,13 @@ fn create_main_window() -> Result<HWND> {
 struct Shell {
     gfx: Gfx,
     overlays: Overlays,
+    ui: Ui,
+    settings: SettingsView,
+    tray: Tray,
     app: App,
     main: HWND,
+    /// Option de test : l'interface reste visible dans les captures d'écran.
+    capturable: bool,
     start: Instant,
     cfg_path: PathBuf,
     /// Faux en démonstration : les réglages ne sont pas écrits.
@@ -145,7 +183,11 @@ impl Shell {
     fn apply(&mut self, effects: Vec<Effect>) {
         for e in effects {
             match e {
-                Effect::OverlayCapture(on) => self.overlays.set_capture(on),
+                Effect::OverlayCapture(on) => {
+                    self.overlays.set_capture(on);
+                    self.ui.raise();
+                    self.settings.panel.raise();
+                }
                 Effect::FilterChanged => {
                     let draw = self.app.draw_mode;
                     let bindings = self.app.cfg.bindings.clone();
@@ -155,9 +197,83 @@ impl Shell {
                     });
                 }
                 Effect::ConfigChanged => self.save(),
-                Effect::UiChanged | Effect::CaptureAffinityChanged | Effect::BindingConflict(_) => {}
+                Effect::UiChanged => {
+                    self.ui.dirty = true;
+                    self.settings.dirty = true;
+                }
+                Effect::CaptureAffinityChanged => self.apply_capture_affinity(),
+                Effect::BindingConflict(_) => {}
             }
         }
+    }
+
+    fn apply_capture_affinity(&self) {
+        let hidden = self.app.cfg.hide_from_capture && !self.capturable;
+        self.ui.set_capture_hidden(hidden);
+        self.settings.panel.set_capture_hidden(hidden);
+    }
+
+    fn close_settings(&mut self) {
+        self.settings.close();
+        input::with_filter(|f| f.set_capturing(false));
+    }
+
+    fn toggle_settings(&mut self) {
+        if self.settings.visible() {
+            self.close_settings();
+            return;
+        }
+        let bar = self.ui.toolbar.rect();
+        let center = Pt::new(bar.x + bar.w / 2.0, bar.y + bar.h / 2.0);
+        let (monitor, scale) = self.overlays.monitor_at(center).unwrap_or(self.overlays.primary());
+        if let Err(e) = self.settings.open(&self.gfx, monitor, scale, autostart::is_enabled()) {
+            log::error(&format!("ouverture des réglages : {e}"));
+        }
+    }
+
+    fn settings_actions(&mut self, actions: Vec<SettingsAction>, now: u64) {
+        for action in actions {
+            match action {
+                SettingsAction::Command(cmd) => self.command(cmd, now),
+                SettingsAction::Capture { action, double } => {
+                    self.settings.capturing = Some((action, double));
+                    input::with_filter(|f| if double { f.set_capturing_double() } else { f.set_capturing(true) });
+                }
+                SettingsAction::CancelCapture => {
+                    self.settings.capturing = None;
+                    input::with_filter(|f| f.set_capturing(false));
+                }
+                SettingsAction::Autostart(on) => {
+                    if let Err(e) = autostart::set_enabled(on) {
+                        log::error(&format!("lancement au démarrage : {e}"));
+                    }
+                    self.settings.set_autostart(autostart::is_enabled());
+                }
+                SettingsAction::Close => self.close_settings(),
+            }
+        }
+        self.settings.dirty = true;
+    }
+
+    /// Un raccourci vient d'être saisi dans les réglages (ou la saisie a été annulée).
+    fn capture_result(&mut self, ev: InputEvent, now: u64) {
+        let Some((action, _)) = self.settings.capturing.take() else {
+            return;
+        };
+        self.settings.dirty = true;
+        let InputEvent::Captured(shortcut) = ev else {
+            return;
+        };
+        let effects = self.app.command(UiCommand::SetBinding(action, shortcut), now);
+        for e in &effects {
+            if let Effect::BindingConflict(other) = e {
+                self.settings.show_conflict(action, conflict_message(shortcut, *other), now + CONFLICT_MS);
+                unsafe {
+                    SetTimer(Some(self.main), TIMER_CONFLICT, CONFLICT_MS as u32 + 50, None);
+                }
+            }
+        }
+        self.apply(effects);
     }
 
     fn save(&mut self) {
@@ -168,16 +284,66 @@ impl Shell {
             if !self.save_failed {
                 self.save_failed = true;
                 log::error(&format!("réglages non enregistrés : {e}"));
+                self.tray.notify(
+                    "Ekspointer",
+                    "Les réglages ne peuvent pas être enregistrés dans ce dossier. Ils seront perdus à la fermeture.",
+                );
             }
         }
     }
 
+    /// Exécute une commande de l'interface.
+    fn command(&mut self, cmd: UiCommand, now: u64) {
+        let effects = self.app.command(cmd, now);
+        self.apply(effects);
+        if matches!(cmd, UiCommand::SetToolbarCollapsed(_)) {
+            self.relayout_ui();
+        }
+    }
+
+    fn relayout_ui(&mut self) {
+        if let Err(e) = self.ui.place_toolbar(&self.gfx, &self.app, &self.overlays) {
+            log::error(&format!("placement de la barre d'outils : {e}"));
+        }
+    }
+
+    fn show_toolbar(&mut self, visible: bool) {
+        if let Err(e) = self.ui.set_toolbar_visible(&self.gfx, &self.app, &self.overlays, visible) {
+            log::error(&format!("affichage de la barre d'outils : {e}"));
+        }
+    }
+
+    fn ui_actions(&mut self, actions: Vec<UiAction>, now: u64) {
+        for action in actions {
+            match action {
+                UiAction::Command(cmd) => self.command(cmd, now),
+                UiAction::ToggleSettings => self.toggle_settings(),
+                UiAction::ArmTooltip => unsafe {
+                    SetTimer(Some(self.main), TIMER_TOOLTIP, TIP_DELAY_MS as u32, None);
+                },
+            }
+        }
+    }
+
+    /// Indique au filtre d'entrées où se trouvent les fenêtres de l'interface.
+    fn sync_exempt_rects(&self) {
+        let mut rects = self.ui.exempt_rects();
+        if self.settings.visible() {
+            rects.push(self.settings.panel.rect());
+        }
+        input::with_filter(|f| f.set_exempt_rects(rects));
+    }
+
     fn handle(&mut self, msg: Msg, now: u64) {
         match msg {
+            Msg::Input(ev @ (InputEvent::Captured(_) | InputEvent::CaptureCancelled)) => self.capture_result(ev, now),
             Msg::Input(ev) => {
                 let overlays = &self.overlays;
                 let effects = self.app.input(ev, now, &|p| overlays.scale_at(p));
                 self.apply(effects);
+                if matches!(ev, InputEvent::Click(..) | InputEvent::StrokeBegin(_)) {
+                    self.ui.on_click_outside();
+                }
                 if matches!(ev, InputEvent::HoldStart) {
                     unsafe {
                         SetTimer(Some(self.main), TIMER_RESYNC, 250, None);
@@ -191,7 +357,44 @@ impl Shell {
                     log::error(&format!("recréation des fenêtres de dessin : {e}"));
                 }
                 self.overlays.set_capture(self.app.draw_mode);
+                self.close_settings();
+                self.relayout_ui();
+                self.ui.raise();
             }
+            Msg::Panel(PanelId::Settings, ev) => {
+                let actions = self.settings.on_event(ev, &self.app);
+                self.settings_actions(actions, now);
+            }
+            Msg::Timer(TIMER_CONFLICT) => self.settings.expire(now),
+            Msg::Panel(id, ev) => match self.ui.on_panel(&self.gfx, id, ev, &self.app, &self.overlays, now) {
+                Ok(actions) => self.ui_actions(actions, now),
+                Err(e) => log::error(&format!("interface : {e}")),
+            },
+            Msg::Timer(TIMER_TOOLTIP) => {
+                if let Err(e) = self.ui.show_tooltip_if_due(&self.gfx, &self.app, &self.overlays, now) {
+                    log::error(&format!("bulle d'aide : {e}"));
+                }
+                self.ui.dirty = true;
+            }
+            Msg::Tray(cmd) => match cmd {
+                TrayCommand::ShowToolbar => self.show_toolbar(true),
+                TrayCommand::OpenMenu => {
+                    if let Some(chosen) = self.tray.menu(self.ui.toolbar_visible()) {
+                        win::post(Msg::Tray(chosen));
+                    }
+                }
+                TrayCommand::Recreate => self.tray.add(),
+                TrayCommand::ToggleToolbar => self.show_toolbar(!self.ui.toolbar_visible()),
+                TrayCommand::Settings => {
+                    if !self.settings.visible() {
+                        self.toggle_settings();
+                    }
+                }
+                TrayCommand::Quit => unsafe {
+                    let _ = DestroyWindow(self.main);
+                },
+            },
+            Msg::ShowToolbar => self.show_toolbar(true),
             Msg::Timer(TIMER_RESYNC) => {
                 input::resync();
                 if self.app.hold {
@@ -200,8 +403,9 @@ impl Shell {
                     }
                 }
             }
-            Msg::Timer(_) | Msg::ShowToolbar => {}
+            Msg::Timer(_) => {}
         }
+        self.sync_exempt_rects();
     }
 
     fn render(&mut self, now: u64) {
@@ -218,6 +422,12 @@ impl Shell {
                 }
                 Err(e) => log::error(&format!("périphérique graphique indisponible : {e}")),
             }
+        }
+        if let Err(e) = self.ui.draw(&self.gfx, &self.app, now) {
+            log::error(&format!("dessin de l'interface : {e}"));
+        }
+        if let Err(e) = self.settings.draw(&self.gfx, &self.app) {
+            log::error(&format!("dessin des réglages : {e}"));
         }
     }
 
@@ -266,6 +476,44 @@ fn demo_scene(shell: &mut Shell) {
     app.command(UiCommand::SelectTool(None), 0);
 }
 
+/// Met l'interface dans un état donné en lui envoyant les mêmes événements que la souris.
+fn demo_ui(shell: &mut Shell, name: &str) {
+    let scale = shell.ui.toolbar.scale;
+    let at = |item: Item| {
+        let r = toolbar::layout(false).rect(item).unwrap_or_default();
+        Pt::new((r.x + r.w / 2.0) * scale, (r.y + r.h / 2.0) * scale)
+    };
+    let click = |item: Item| {
+        win::post(Msg::Panel(PanelId::Toolbar, PanelEvent::Down(at(item))));
+        win::post(Msg::Panel(PanelId::Toolbar, PanelEvent::Up(at(item))));
+    };
+    match name {
+        "popover" => click(Item::Color),
+        "width" => click(Item::Width),
+        "tooltip" => win::post(Msg::Panel(PanelId::Toolbar, PanelEvent::Move(at(Item::Clear)))),
+        "drawing" => {
+            click(Item::Tool(Some(Tool::Ellipse)));
+            click(Item::Halo);
+            click(Item::Pin);
+        }
+        "collapsed" => shell.command(UiCommand::SetToolbarCollapsed(true), 0),
+        "settings" | "settings-end" | "conflict" => {
+            shell.toggle_settings();
+            if name == "settings-end" {
+                win::post(Msg::Panel(PanelId::Settings, PanelEvent::Wheel(-30.0)));
+            }
+            if name == "conflict" {
+                win::post(Msg::Panel(PanelId::Settings, PanelEvent::Wheel(-4.0)));
+                shell.settings.capturing = Some((ekspointer::shortcuts::Action::ToolRect, false));
+                if let Ok(shortcut) = "F".parse() {
+                    win::post(Msg::Input(InputEvent::Captured(shortcut)));
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 fn fatal(text: &str) -> ! {
     log::error(text);
     let wide: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
@@ -280,13 +528,13 @@ fn run(args: Args) -> Result<()> {
     win::set_notify(main);
 
     let cfg_path = config::default_path();
-    let (mut cfg, outcome) = if args.demo { (Config::default(), LoadOutcome::Defaults) } else { config::load(&cfg_path) };
+    let demo = args.demo || args.demo_ui.is_some();
+    let (mut cfg, outcome) = if demo { (Config::default(), LoadOutcome::Defaults) } else { config::load(&cfg_path) };
     if let LoadOutcome::Invalid { backup } = &outcome {
         log::error(&format!("réglages illisibles, mis de côté dans {}", backup.display()));
     }
-    if args.capturable {
-        cfg.hide_from_capture = false;
-    }
+    cfg.sanitize();
+    TASKBAR_CREATED.store(unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) }, std::sync::atomic::Ordering::Relaxed);
 
     let gfx = Gfx::new()?;
     let overlays = Overlays::new(&gfx)?;
@@ -297,19 +545,39 @@ fn run(args: Args) -> Result<()> {
         Err(_) => fatal("Ekspointer n'a pas pu démarrer l'écoute du clavier et de la souris."),
     };
 
+    let animate = animations_enabled();
+    let ui = Ui::new(&gfx, &app, &overlays, animate)?;
+    let settings = SettingsView::new(&gfx)?;
+    let tray = Tray::new(main)?;
+    if matches!(outcome, LoadOutcome::Invalid { .. }) {
+        tray.notify(
+            "Ekspointer",
+            "Le fichier de réglages était illisible. Il a été renommé en config.invalide.json et les réglages par défaut sont utilisés.",
+        );
+    }
+
     let mut shell = Shell {
         gfx,
         overlays,
+        ui,
+        settings,
+        tray,
         app,
         main,
+        capturable: args.capturable,
         start: Instant::now(),
         cfg_path,
-        save_enabled: !args.demo && !args.capturable,
+        save_enabled: !demo,
         save_failed: false,
-        animate: animations_enabled(),
+        animate,
     };
+    shell.apply_capture_affinity();
+    shell.sync_exempt_rects();
     if args.demo {
         demo_scene(&mut shell);
+    }
+    if let Some(name) = &args.demo_ui {
+        demo_ui(&mut shell, name);
     }
 
     let mut dirty = true;
@@ -342,7 +610,7 @@ fn run(args: Args) -> Result<()> {
         for m in win::drain() {
             shell.handle(m, now);
         }
-        animating = shell.app.tick(now);
+        animating = shell.app.tick(now) | shell.ui.animating(now);
         shell.render(now);
         dirty = false;
         if animating {

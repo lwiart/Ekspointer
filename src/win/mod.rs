@@ -7,8 +7,14 @@ pub mod fonts;
 pub mod gfx;
 pub mod input;
 pub mod log;
+pub mod autostart;
+pub mod icons;
 pub mod overlay;
+pub mod panel;
 pub mod render;
+pub mod settings_view;
+pub mod tray;
+pub mod ui;
 
 use ekspointer::input_filter::InputEvent;
 use std::cell::{Cell, RefCell};
@@ -34,6 +40,10 @@ pub enum Msg {
     Timer(usize),
     /// Un second lancement demande d'afficher la barre.
     ShowToolbar,
+    /// Événement de souris d'un panneau de l'interface.
+    Panel(panel::PanelId, panel::PanelEvent),
+    /// Commande du menu de la zone de notification.
+    Tray(tray::TrayCommand),
 }
 
 thread_local! {
