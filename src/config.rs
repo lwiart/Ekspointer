@@ -5,7 +5,115 @@ use crate::shortcuts::Bindings;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-// IMPL
+/// Réglages de l'application, enregistrés dans `config.json` à côté de l'exécutable.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[serde(default)]
+pub struct Config {
+    /// Version du format du fichier.
+    pub version: u32,
+    /// Durée avant effacement, en secondes (2 à 15).
+    pub hold_seconds: u8,
+    /// Indice de l'épaisseur dans `geom::WIDTHS` (0 à 2).
+    pub width: u8,
+    /// Indice de la couleur dans `geom::PALETTE` (0 à 5).
+    pub color: u8,
+    pub last_tool: Tool,
+    pub halo_on: bool,
+    /// Diamètre du halo en pixels logiques (40 à 120).
+    pub halo_size: u32,
+    /// Le halo prend la couleur de dessin ; sinon il reste ambre.
+    pub halo_follows_color: bool,
+    pub ripple_on: bool,
+    pub trail_on: bool,
+    pub pinned: bool,
+    pub bindings: Bindings,
+    /// Position de la barre d'outils dans le bureau virtuel.
+    pub toolbar_pos: Option<(i32, i32)>,
+    pub toolbar_collapsed: bool,
+    /// Exclut la barre d'outils du partage d'écran.
+    pub hide_from_capture: bool,
+}
+
+impl Default for Config {
+    fn default() -> Config {
+        Config {
+            version: 1,
+            hold_seconds: 5,
+            width: 1,
+            color: 0,
+            last_tool: Tool::Arrow,
+            halo_on: false,
+            halo_size: 64,
+            halo_follows_color: true,
+            ripple_on: false,
+            trail_on: false,
+            pinned: false,
+            bindings: Bindings::defaults(),
+            toolbar_pos: None,
+            toolbar_collapsed: false,
+            hide_from_capture: true,
+        }
+    }
+}
+
+impl Config {
+    /// Ramène chaque valeur dans ses bornes.
+    pub fn sanitize(&mut self) {
+        self.hold_seconds = self.hold_seconds.clamp(2, 15);
+        self.width = self.width.min(2);
+        self.color = self.color.min(5);
+        self.halo_size = self.halo_size.clamp(40, 120);
+    }
+}
+
+/// Ce qui s'est passé à la lecture des réglages.
+#[derive(Debug)]
+pub enum LoadOutcome {
+    /// Fichier lu.
+    Loaded,
+    /// Pas de fichier : valeurs par défaut.
+    Defaults,
+    /// Fichier illisible : mis de côté dans `backup`, valeurs par défaut.
+    Invalid { backup: PathBuf },
+}
+
+/// Emplacement du fichier de réglages : à côté de l'exécutable.
+pub fn default_path() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("config.json")
+}
+
+/// Lit les réglages. Ne renvoie jamais d'erreur : au pire, les valeurs par défaut.
+pub fn load(path: &Path) -> (Config, LoadOutcome) {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return (Config::default(), LoadOutcome::Defaults);
+    };
+    match serde_json::from_str::<Config>(&text) {
+        Ok(mut cfg) => {
+            cfg.sanitize();
+            (cfg, LoadOutcome::Loaded)
+        }
+        Err(_) => {
+            let backup = path.with_file_name("config.invalide.json");
+            let _ = std::fs::remove_file(&backup);
+            let _ = std::fs::rename(path, &backup);
+            (Config::default(), LoadOutcome::Invalid { backup })
+        }
+    }
+}
+
+/// Écrit les réglages de façon atomique : fichier temporaire puis renommage.
+pub fn save(path: &Path, cfg: &Config) -> std::io::Result<()> {
+    let tmp = path.with_extension("json.tmp");
+    let text = serde_json::to_string_pretty(cfg).map_err(std::io::Error::other)?;
+    std::fs::write(&tmp, text)?;
+    std::fs::rename(&tmp, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
+}
 
 #[cfg(test)]
 mod tests {
