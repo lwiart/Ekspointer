@@ -8,7 +8,269 @@ use crate::shapes::{Scene, Tool};
 use crate::shortcuts::{Action, Bindings, Shortcut};
 use crate::ui::theme;
 
-// IMPL
+/// Commande venue de l'interface (barre d'outils, réglages).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum UiCommand {
+    /// `Some(outil)` entre en mode dessin avec cet outil ; `None` (Curseur) en sort.
+    SelectTool(Option<Tool>),
+    SetColor(u8),
+    SetWidth(u8),
+    ToggleHalo,
+    ToggleRipple,
+    ToggleTrail,
+    TogglePin,
+    ClearAll,
+    SetHoldSeconds(u8),
+    SetHaloSize(u32),
+    SetHaloFollowsColor(bool),
+    SetBinding(Action, Shortcut),
+    ResetBindings,
+    SetHideFromCapture(bool),
+    SetToolbarPos(i32, i32),
+    SetToolbarCollapsed(bool),
+}
+
+/// Ce que la couche Windows doit faire après une transition.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Effect {
+    /// Les fenêtres de dessin doivent capter (ou laisser passer) la souris.
+    OverlayCapture(bool),
+    /// Le filtre d'entrées doit être resynchronisé (mode dessin, raccourcis).
+    FilterChanged,
+    /// Les réglages doivent être enregistrés.
+    ConfigChanged,
+    /// La barre d'outils et les réglages doivent être redessinés.
+    UiChanged,
+    /// Le masquage au partage d'écran a changé.
+    CaptureAffinityChanged,
+    /// Le raccourci demandé est déjà pris par cette action.
+    BindingConflict(Action),
+}
+
+/// État complet de l'application.
+#[derive(Debug)]
+pub struct App {
+    pub cfg: Config,
+    pub scene: Scene,
+    pub pointer: Pointer,
+    /// Outil courant, utilisé en mode dessin comme en touche maintenue.
+    pub tool: Tool,
+    /// Mode dessin (bascule) actif.
+    pub draw_mode: bool,
+    /// Combinaison de maintien tenue.
+    pub hold: bool,
+    pub shift: bool,
+    /// Dernier point du tracé en cours, pour réappliquer la contrainte Maj.
+    last_pt: Option<Pt>,
+}
+
+impl App {
+    pub fn new(mut cfg: Config) -> App {
+        cfg.sanitize();
+        let mut scene = Scene::new(cfg.hold_seconds as u64 * 1000);
+        scene.set_pinned(cfg.pinned, 0);
+        App {
+            tool: cfg.last_tool,
+            cfg,
+            scene,
+            pointer: Pointer::new(),
+            draw_mode: false,
+            hold: false,
+            shift: false,
+            last_pt: None,
+        }
+    }
+
+    /// Couleur du halo : couleur de dessin, ou ambre si le halo ne la suit pas.
+    pub fn halo_color(&self) -> Rgba {
+        if self.cfg.halo_follows_color {
+            PALETTE[self.cfg.color as usize % PALETTE.len()]
+        } else {
+            theme::EMBER
+        }
+    }
+
+    fn set_draw(&mut self, on: bool) -> Vec<Effect> {
+        if on == self.draw_mode {
+            return Vec::new();
+        }
+        if !on {
+            self.scene.cancel();
+            self.last_pt = None;
+        }
+        self.draw_mode = on;
+        vec![Effect::OverlayCapture(on), Effect::FilterChanged, Effect::UiChanged]
+    }
+
+    fn select_tool(&mut self, tool: Tool) -> Vec<Effect> {
+        self.tool = tool;
+        self.cfg.last_tool = tool;
+        vec![Effect::ConfigChanged, Effect::UiChanged]
+    }
+
+    fn set_color(&mut self, color: u8) -> Vec<Effect> {
+        self.cfg.color = color.min(PALETTE.len() as u8 - 1);
+        vec![Effect::ConfigChanged, Effect::UiChanged]
+    }
+
+    fn toggle_halo(&mut self) -> Vec<Effect> {
+        self.cfg.halo_on = !self.cfg.halo_on;
+        vec![Effect::ConfigChanged, Effect::UiChanged]
+    }
+
+    /// Traite un événement d'entrée. `scale_at` donne l'échelle de l'écran sous un point.
+    pub fn input(&mut self, ev: InputEvent, now: u64, scale_at: &dyn Fn(Pt) -> f32) -> Vec<Effect> {
+        match ev {
+            InputEvent::Action(action) => match action {
+                Action::ToggleDraw => self.set_draw(!self.draw_mode),
+                Action::ExitDraw => self.set_draw(false),
+                Action::ClearAll => {
+                    self.scene.clear_all(now);
+                    Vec::new()
+                }
+                Action::ToggleHalo => self.toggle_halo(),
+                Action::ToolArrow => self.select_tool(Tool::Arrow),
+                Action::ToolRect => self.select_tool(Tool::Rect),
+                Action::ToolEllipse => self.select_tool(Tool::Ellipse),
+                Action::ToolFree => self.select_tool(Tool::Free),
+                Action::ToolHighlighter => self.select_tool(Tool::Highlighter),
+                Action::ToolNumber => self.select_tool(Tool::Number),
+                Action::Color(i) => self.set_color(i),
+                Action::Undo => {
+                    self.scene.undo();
+                    Vec::new()
+                }
+                Action::HoldDraw => Vec::new(),
+            },
+            InputEvent::HoldStart => {
+                self.hold = true;
+                vec![Effect::UiChanged]
+            }
+            InputEvent::HoldEnd => {
+                self.hold = false;
+                if !self.draw_mode {
+                    self.scene.release(now);
+                    self.last_pt = None;
+                }
+                vec![Effect::UiChanged]
+            }
+            InputEvent::Shift(on) => {
+                self.shift = on;
+                if let Some(p) = self.last_pt {
+                    self.scene.drag(p, on);
+                }
+                Vec::new()
+            }
+            InputEvent::PointerMove(p) => {
+                self.pointer.on_move(p, now, self.cfg.trail_on);
+                Vec::new()
+            }
+            InputEvent::Click(p, button) => {
+                if self.cfg.ripple_on {
+                    self.pointer.on_click(p, button, scale_at(p), now);
+                }
+                Vec::new()
+            }
+            InputEvent::StrokeBegin(p) => {
+                if self.draw_mode || self.hold {
+                    let width = WIDTHS[self.cfg.width as usize % WIDTHS.len()];
+                    self.scene.begin(self.tool, p, self.cfg.color, width, scale_at(p), now);
+                    self.last_pt = Some(p);
+                }
+                Vec::new()
+            }
+            InputEvent::StrokeMove(p) => {
+                if self.last_pt.is_some() {
+                    self.scene.drag(p, self.shift);
+                    self.last_pt = Some(p);
+                }
+                Vec::new()
+            }
+            InputEvent::StrokeEnd => {
+                self.scene.release(now);
+                self.last_pt = None;
+                Vec::new()
+            }
+            InputEvent::Captured(_) | InputEvent::CaptureCancelled => Vec::new(),
+        }
+    }
+
+    /// Traite une commande de l'interface.
+    pub fn command(&mut self, cmd: UiCommand, now: u64) -> Vec<Effect> {
+        let saved = vec![Effect::ConfigChanged, Effect::UiChanged];
+        match cmd {
+            UiCommand::SelectTool(Some(tool)) => {
+                let mut e = self.select_tool(tool);
+                e.extend(self.set_draw(true));
+                e
+            }
+            UiCommand::SelectTool(None) => self.set_draw(false),
+            UiCommand::SetColor(c) => self.set_color(c),
+            UiCommand::SetWidth(w) => {
+                self.cfg.width = w.min(WIDTHS.len() as u8 - 1);
+                saved
+            }
+            UiCommand::ToggleHalo => self.toggle_halo(),
+            UiCommand::ToggleRipple => {
+                self.cfg.ripple_on = !self.cfg.ripple_on;
+                saved
+            }
+            UiCommand::ToggleTrail => {
+                self.cfg.trail_on = !self.cfg.trail_on;
+                saved
+            }
+            UiCommand::TogglePin => {
+                self.cfg.pinned = !self.cfg.pinned;
+                self.scene.set_pinned(self.cfg.pinned, now);
+                saved
+            }
+            UiCommand::ClearAll => {
+                self.scene.clear_all(now);
+                Vec::new()
+            }
+            UiCommand::SetHoldSeconds(s) => {
+                self.cfg.hold_seconds = s.clamp(2, 15);
+                self.scene.set_hold_ms(self.cfg.hold_seconds as u64 * 1000);
+                saved
+            }
+            UiCommand::SetHaloSize(s) => {
+                self.cfg.halo_size = s.clamp(40, 120);
+                saved
+            }
+            UiCommand::SetHaloFollowsColor(on) => {
+                self.cfg.halo_follows_color = on;
+                saved
+            }
+            UiCommand::SetBinding(action, shortcut) => match self.cfg.bindings.set(action, shortcut) {
+                Ok(()) => vec![Effect::FilterChanged, Effect::ConfigChanged, Effect::UiChanged],
+                Err(other) => vec![Effect::BindingConflict(other)],
+            },
+            UiCommand::ResetBindings => {
+                self.cfg.bindings = Bindings::defaults();
+                vec![Effect::FilterChanged, Effect::ConfigChanged, Effect::UiChanged]
+            }
+            UiCommand::SetHideFromCapture(on) => {
+                self.cfg.hide_from_capture = on;
+                vec![Effect::ConfigChanged, Effect::UiChanged, Effect::CaptureAffinityChanged]
+            }
+            UiCommand::SetToolbarPos(x, y) => {
+                self.cfg.toolbar_pos = Some((x, y));
+                vec![Effect::ConfigChanged]
+            }
+            UiCommand::SetToolbarCollapsed(on) => {
+                self.cfg.toolbar_collapsed = on;
+                saved
+            }
+        }
+    }
+
+    /// Fait avancer les animations. Renvoie vrai tant qu'il faut continuer à dessiner.
+    pub fn tick(&mut self, now: u64) -> bool {
+        let scene = self.scene.tick(now);
+        let pointer = self.pointer.tick(now);
+        scene || pointer
+    }
+}
 
 #[cfg(test)]
 mod tests {
