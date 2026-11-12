@@ -23,7 +23,8 @@ use windows::core::{w, Result, PCWSTR};
 use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Dwm::DwmFlush;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::System::Threading::CreateMutexW;
+use windows::Win32::System::ProcessStatus::K32EmptyWorkingSet;
+use windows::Win32::System::Threading::{CreateMutexW, GetCurrentProcess};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 const MAIN_CLASS: PCWSTR = w!("EkspointerMain");
@@ -36,6 +37,10 @@ const TIMER_RESYNC: usize = 2;
 /// Minuteur de la bulle d'aide de la barre d'outils.
 const TIMER_TOOLTIP: usize = 3;
 
+/// Minuteur unique, peu après le démarrage : rend au système la mémoire qui n'a servi qu'à l'initialisation.
+const TIMER_TRIM: usize = 5;
+/// Délai de ce minuteur, en millisecondes.
+const TRIM_DELAY_MS: u32 = 3000;
 /// Minuteur d'effacement du message de conflit de raccourci.
 const TIMER_CONFLICT: usize = 4;
 
@@ -366,6 +371,11 @@ impl Shell {
                 self.settings_actions(actions, now);
             }
             Msg::Timer(TIMER_CONFLICT) => self.settings.expire(now),
+            Msg::Timer(TIMER_TRIM) => unsafe {
+                // Les bibliothèques graphiques touchent beaucoup de mémoire à l'initialisation, qui ne
+                // resservira pas : Windows la reprend, et ne recharge ensuite que ce qui est réellement utilisé.
+                let _ = K32EmptyWorkingSet(GetCurrentProcess());
+            },
             Msg::Panel(id, ev) => match self.ui.on_panel(&self.gfx, id, ev, &self.app, &self.overlays, now) {
                 Ok(actions) => self.ui_actions(actions, now),
                 Err(e) => log::error(&format!("interface : {e}")),
@@ -433,6 +443,7 @@ impl Shell {
 
     /// Arme le minuteur qui réveillera la boucle quand une forme devra commencer son fondu.
     fn arm_deadline(&self, now: u64) {
+
         if let Some(deadline) = self.app.scene.next_deadline(now) {
             let delay = deadline.saturating_sub(now).clamp(1, u32::MAX as u64) as u32;
             unsafe {
@@ -474,6 +485,8 @@ fn demo_scene(shell: &mut Shell) {
         }
     }
     app.command(UiCommand::SelectTool(None), 0);
+    // Halo allumé : il suit le vrai curseur, ce qui permet de le vérifier sur une capture.
+    app.command(UiCommand::ToggleHalo, 0);
 }
 
 /// Met l'interface dans un état donné en lui envoyant les mêmes événements que la souris.
@@ -573,6 +586,9 @@ fn run(args: Args) -> Result<()> {
     };
     shell.apply_capture_affinity();
     shell.sync_exempt_rects();
+    unsafe {
+        SetTimer(Some(main), TIMER_TRIM, TRIM_DELAY_MS, None);
+    }
     if args.demo {
         demo_scene(&mut shell);
     }

@@ -175,11 +175,6 @@ impl Overlays {
         }
     }
 
-    /// Fenêtres de dessin, pour replacer la barre d'outils au-dessus d'elles.
-    pub fn hwnds(&self) -> Vec<HWND> {
-        self.list.iter().map(|o| o.hwnd).collect()
-    }
-
     /// Échelle de l'écran situé sous un point du bureau virtuel.
     pub fn scale_at(&self, p: Pt) -> f32 {
         self.list.iter().find(|o| o.rect.contains(p)).map(|o| o.scale).unwrap_or(1.0)

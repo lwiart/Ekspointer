@@ -215,10 +215,6 @@ impl Surface {
         }
     }
 
-    pub fn size(&self) -> (u32, u32) {
-        (self.w, self.h)
-    }
-
     pub fn resize(&mut self, w: u32, h: u32) -> Result<()> {
         let (w, h) = (w.max(1), h.max(1));
         if (w, h) == (self.w, self.h) {

@@ -81,11 +81,10 @@ fn main() -> Res<()> {
     let small = load("assets/logo-small.svg")?;
     write_ico(&full, &small, "assets/ekspointer.ico")?;
     // Assistant d'installation : petite image en haut à droite, grande image des pages d'accueil et de fin.
-    write_bmp(&full, "assets/wizard-small.bmp", 55, 58, (0xFC, 0xFD, 0xFE), 50, 4)?;
-    write_bmp(&full, "assets/wizard-large.bmp", 164, 314, (0xE3, 0xF1, 0xF7), 128, 40)?;
-    // Aperçu pour les vérifications visuelles.
+    write_bmp(&full, "assets/wizard-small.bmp", 165, 174, (0xFC, 0xFD, 0xFE), 150, 12)?;
+    write_bmp(&full, "assets/wizard-large.bmp", 492, 942, (0xE3, 0xF1, 0xF7), 384, 120)?;
+    // Aperçu, utilisé par le README.
     render(&full, 256)?.save_png("assets/logo-preview.png")?;
-    render(&small, 64)?.save_png("assets/logo-small-preview.png")?;
     println!("icône et images de l'assistant générées dans assets/");
     Ok(())
 }

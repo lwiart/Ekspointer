@@ -4,3 +4,4 @@
 *.ico binary
 *.ttf binary
 *.bmp binary
+*.ps1 text eol=crlf
