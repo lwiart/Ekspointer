@@ -161,11 +161,14 @@ Lisibilité sur tout fond : chaque forme, sauf le surligneur, porte un liseré b
 
 ### 5.4 Géométrie de la flèche
 
+Style demandé par l'utilisateur le 13/11/2026, d'après une image de référence : un corps qui part en pointe fine de l'origine et s'élargit nettement, une tête large aux ailes tirées vers l'arrière.
+
 Pour une flèche de longueur `L` et d'épaisseur `w` :
 
-- **Tête** : longueur `h = min(max(4,5 × w, 16), 0,4 × L)`, largeur `0,8 × h` (soit `3,6 × w` quand `h` vaut `4,5 × w`, et réduite d'autant quand `h` est plafonnée). Les deux ailes sont tirées vers l'arrière : le creux à la base de la tête est avancé de `0,25 × h` vers la pointe.
-- **Corps** : effilé, largeur `0,35 × w` à l'origine, `w` à la jonction avec la tête. L'origine est arrondie.
-- **Angles** : pointe et extrémités des ailes arrondies avec un rayon de `0,5 × w`.
+- **Tête** : longueur `h = min(5,2 × w ; 0,45 × L)`, envergure `5,5 × w`. Les deux ailes sont tirées vers l'arrière : le creux à la base de la tête est avancé de `0,22 × h` vers la pointe.
+- **Corps** : en pointe à l'origine (largeur nulle), large de `2,2 × w` à la jonction avec la tête.
+- **Flèche courte** : quand `h` est plafonnée, l'envergure et la largeur du corps sont réduites dans la même proportion.
+- **Angles** : très légèrement adoucis, rayon `0,15 × w`.
 - Le tout forme un seul contour fermé, rempli de la couleur courante.
 
 ### 5.5 Cycle de vie d'une forme

@@ -19,20 +19,34 @@ pub struct ArrowGeom {
     pub corner_radius: f32,
 }
 
+/// Longueur de la tête, en multiples de l'épaisseur.
+const HEAD_LEN: f32 = 5.2;
+/// Envergure de la tête, en multiples de l'épaisseur.
+const HEAD_WIDTH: f32 = 5.5;
+/// Largeur du corps au col, en multiples de l'épaisseur.
+const NECK_WIDTH: f32 = 2.2;
+/// Part de la longueur que la tête ne dépasse jamais.
+const HEAD_MAX_SHARE: f32 = 0.45;
+
 /// Proportions d'une flèche de longueur `len` et d'épaisseur `w`.
+///
+/// Le corps part en pointe de l'origine et s'élargit jusqu'au col ; la tête est large,
+/// avec des ailes tirées vers l'arrière. Une flèche courte est réduite en proportion.
 pub fn arrow_geom(len: f32, w: f32) -> ArrowGeom {
-    let head_len = (4.5 * w).max(16.0).min(0.4 * len.max(0.0));
+    let nominal = HEAD_LEN * w;
+    let head_len = nominal.min(HEAD_MAX_SHARE * len.max(0.0));
+    let f = if nominal > 0.0 { head_len / nominal } else { 0.0 };
     ArrowGeom {
         head_len,
-        head_width: 0.8 * head_len,
-        tail_width: 0.35 * w,
-        neck_width: w,
-        notch: 0.25 * head_len,
-        corner_radius: 0.5 * w,
+        head_width: HEAD_WIDTH * w * f,
+        tail_width: 0.0,
+        neck_width: NECK_WIDTH * w * f,
+        notch: 0.22 * head_len,
+        corner_radius: 0.15 * w,
     }
 }
 
-/// Contour fermé de la flèche : queue gauche, col gauche, aile gauche, pointe,
+/// Contour fermé de la flèche (la queue est une pointe) : queue gauche, col gauche, aile gauche, pointe,
 /// aile droite, col droit, queue droite.
 pub fn arrow_outline(from: Pt, to: Pt, w: f32) -> [Pt; 7] {
     let len = from.dist(to);
@@ -80,38 +94,41 @@ mod tests {
 
     #[test]
     fn proportions_nominal() {
-        // L = 200, w = 5
+        // L = 200, w = 5 : tête de 5,2 × w, envergure 5,5 × w, col 2,2 × w, queue en pointe
         let g = arrow_geom(200.0, 5.0);
-        assert!(close(g.head_len, 22.5), "{g:?}");
-        assert!(close(g.head_width, 18.0), "{g:?}");
-        assert!(close(g.tail_width, 1.75), "{g:?}");
-        assert!(close(g.neck_width, 5.0), "{g:?}");
-        assert!(close(g.notch, 5.625), "{g:?}");
-        assert!(close(g.corner_radius, 2.5), "{g:?}");
+        assert!(close(g.head_len, 26.0), "{g:?}");
+        assert!(close(g.head_width, 27.5), "{g:?}");
+        assert!(close(g.tail_width, 0.0), "{g:?}");
+        assert!(close(g.neck_width, 11.0), "{g:?}");
+        assert!(close(g.notch, 5.72), "{g:?}");
+        assert!(close(g.corner_radius, 0.75), "{g:?}");
     }
 
     #[test]
-    fn head_has_minimum_16() {
-        // w = 3 : 4,5 × w = 13,5 < 16
-        let g = arrow_geom(200.0, 3.0);
-        assert!(close(g.head_len, 16.0) && close(g.head_width, 12.8), "{g:?}");
+    fn thickness_scales_the_whole_arrow() {
+        let (thin, thick) = (arrow_geom(400.0, 3.0), arrow_geom(400.0, 8.0));
+        assert!(close(thin.head_len, 15.6) && close(thin.neck_width, 6.6), "{thin:?}");
+        assert!(close(thick.head_len, 41.6) && close(thick.head_width, 44.0) && close(thick.neck_width, 17.6), "{thick:?}");
     }
 
     #[test]
-    fn head_capped_at_40_percent() {
-        // L = 40, w = 8 : 36 plafonné à 16
+    fn short_arrow_shrinks_in_proportion() {
+        // L = 40, w = 8 : tête plafonnée à 45 % de la longueur, le reste suit la même réduction
         let g = arrow_geom(40.0, 8.0);
-        assert!(close(g.head_len, 16.0) && close(g.head_width, 12.8), "{g:?}");
+        let f = 18.0 / 41.6;
+        assert!(close(g.head_len, 18.0), "{g:?}");
+        assert!(close(g.head_width, 44.0 * f) && close(g.neck_width, 17.6 * f) && close(g.notch, 0.22 * 18.0), "{g:?}");
     }
 
     #[test]
     fn outline_tip_and_symmetry() {
         let o = arrow_outline(Pt::new(0., 0.), Pt::new(200., 0.), 5.0);
         assert!(close(o[3].x, 200.0) && close(o[3].y, 0.0), "{o:?}");
-        assert!(close(o[2].x, 177.5) && close(o[2].y, -9.0) && close(o[4].y, 9.0), "{o:?}");
-        assert!(close(o[4].x, 177.5), "{o:?}");
-        assert!(close(o[1].x, 183.125) && close(o[1].y, -2.5) && close(o[5].y, 2.5), "{o:?}");
-        assert!(close(o[0].x, 0.0) && close(o[0].y, -0.875) && close(o[6].y, 0.875), "{o:?}");
+        assert!(close(o[2].x, 174.0) && close(o[2].y, -13.75), "{o:?}");
+        assert!(close(o[4].x, 174.0) && close(o[4].y, 13.75), "{o:?}");
+        assert!(close(o[1].x, 179.72) && close(o[1].y, -5.5) && close(o[5].y, 5.5), "{o:?}");
+        // La queue se termine en pointe : ses deux points sont confondus avec l'origine.
+        assert!(close(o[0].x, 0.0) && close(o[0].y, 0.0) && close(o[6].x, 0.0) && close(o[6].y, 0.0), "{o:?}");
     }
 
     #[test]
@@ -119,8 +136,8 @@ mod tests {
         // Flèche vers le bas : la pointe est en bas, les ailes de part et d'autre en x.
         let o = arrow_outline(Pt::new(50., 0.), Pt::new(50., 200.), 5.0);
         assert!(close(o[3].x, 50.0) && close(o[3].y, 200.0), "{o:?}");
-        assert!(close(o[2].y, 177.5) && close(o[4].y, 177.5), "{o:?}");
-        assert!(close((o[2].x - 50.0).abs(), 9.0) && close(o[2].x + o[4].x, 100.0), "{o:?}");
+        assert!(close(o[2].y, 174.0) && close(o[4].y, 174.0), "{o:?}");
+        assert!(close((o[2].x - 50.0).abs(), 13.75) && close(o[2].x + o[4].x, 100.0), "{o:?}");
     }
 
     #[test]
