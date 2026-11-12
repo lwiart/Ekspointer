@@ -62,6 +62,8 @@ pub enum PanelEvent {
     DoubleClick(Pt),
     /// Crans de molette, positifs vers le haut.
     Wheel(f32),
+    /// La souris a été reprise au panneau : tout glissement en cours doit s'arrêter.
+    Cancel,
 }
 
 fn client_point(lparam: LPARAM) -> Pt {
@@ -99,8 +101,13 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 LRESULT(0)
             }
             WM_LBUTTONUP => {
-                let _ = ReleaseCapture();
+                // Le relâchement d'abord : libérer la capture envoie aussitôt WM_CAPTURECHANGED.
                 send(PanelEvent::Up(client_point(lparam)));
+                let _ = ReleaseCapture();
+                LRESULT(0)
+            }
+            WM_CAPTURECHANGED => {
+                send(PanelEvent::Cancel);
                 LRESULT(0)
             }
             WM_LBUTTONDBLCLK => {
@@ -179,7 +186,16 @@ pub struct Panel {
     /// Rayon des coins, en pixels logiques.
     radius: f32,
     visible: bool,
+    /// Instant du début de l'apparition animée, s'il y en a une en cours.
+    appear_from: Option<u64>,
+    /// Opacité avec laquelle l'ombre a été dessinée pour la dernière fois.
+    shadow_opacity: f32,
 }
+
+/// Montée d'un panneau pendant son apparition, en pixels logiques.
+const APPEAR_RISE: f32 = 8.0;
+/// Le masquage au partage d'écran a déjà échoué une fois : ne pas le journaliser à nouveau.
+static AFFINITY_FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 impl Panel {
     pub fn new(gfx: &Gfx, id: PanelId, size: (f32, f32), radius: f32) -> Result<Panel> {
@@ -191,7 +207,7 @@ impl Panel {
         }
         let surface = Surface::new(gfx, hwnd, 1, 1)?;
         let shadow_surface = Surface::new(gfx, shadow, 1, 1)?;
-        Ok(Panel { hwnd, shadow, surface, shadow_surface, scale: 1.0, size, pos: (0, 0), radius, visible: false })
+        Ok(Panel { hwnd, shadow, surface, shadow_surface, scale: 1.0, size, pos: (0, 0), radius, visible: false, appear_from: None, shadow_opacity: 1.0 })
     }
 
     pub fn visible(&self) -> bool {
@@ -224,7 +240,26 @@ impl Panel {
         self.surface.resize(w as u32, h as u32)?;
         self.shadow_surface.resize((w + 2 * m) as u32, (h + 2 * m) as u32)?;
         self.visible = true;
-        self.draw_shadow(gfx)
+        let opacity = if self.appear_from.is_some() { 0.0 } else { 1.0 };
+        self.draw_shadow(gfx, opacity)
+    }
+
+    /// Demande une apparition animée (fondu et montée, spec 4.3). À appeler avant `place`.
+    pub fn start_appear(&mut self, now: u64) {
+        self.appear_from = Some(now);
+    }
+
+    /// Progression de l'apparition, de 0 à 1.
+    fn appear_progress(&self, now: u64) -> f32 {
+        match self.appear_from {
+            Some(from) => (now.saturating_sub(from) as f32 / theme::T_POPOVER_MS as f32).clamp(0.0, 1.0),
+            None => 1.0,
+        }
+    }
+
+    /// Vrai tant que le panneau est en train d'apparaître.
+    pub fn appearing(&self, now: u64) -> bool {
+        self.visible && self.appear_from.is_some_and(|from| now < from + theme::T_POPOVER_MS)
     }
 
     /// Déplace le panneau sans le redimensionner (glissement de la barre).
@@ -243,6 +278,7 @@ impl Panel {
             return;
         }
         self.visible = false;
+        self.appear_from = None;
         unsafe {
             let _ = ShowWindow(self.hwnd, SW_HIDE);
             let _ = ShowWindow(self.shadow, SW_HIDE);
@@ -265,26 +301,42 @@ impl Panel {
     pub fn set_capture_hidden(&self, hidden: bool) {
         let affinity = if hidden { WDA_EXCLUDEFROMCAPTURE } else { WDA_NONE };
         unsafe {
-            let _ = SetWindowDisplayAffinity(self.hwnd, affinity);
+            let result = SetWindowDisplayAffinity(self.hwnd, affinity);
             let _ = SetWindowDisplayAffinity(self.shadow, affinity);
+            // L'exclusion des captures exige Windows 10 version 2004 : avant, l'appel échoue.
+            if let (true, Err(e)) = (hidden, result) {
+                if !AFFINITY_FAILED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    super::log::error(&format!("la barre ne peut pas être masquée du partage d'écran sur ce système : {e}"));
+                }
+            }
         }
     }
 
     /// Dessine le contenu, en pixels logiques.
-    pub fn draw(&mut self, gfx: &Gfx, f: impl FnOnce(&Painter)) -> Result<()> {
+    pub fn draw(&mut self, gfx: &Gfx, now: u64, f: impl FnOnce(&Painter)) -> Result<()> {
         if !self.visible {
             return Ok(());
         }
-        self.surface.draw(gfx, self.scale, f)
+        let progress = self.appear_progress(now);
+        if progress >= 1.0 {
+            self.appear_from = None;
+        }
+        let t = theme::ease(progress);
+        if (self.shadow_opacity - t).abs() > 0.001 {
+            self.draw_shadow(gfx, t)?;
+        }
+        let rise = (1.0 - t) * APPEAR_RISE * self.scale;
+        self.surface.draw_shifted(gfx, self.scale, rise, |p| p.with_opacity(t, || f(p)))
     }
 
     /// Ombre « menu » du design system : `0 20px 44px -20px rgba(0,60,88,.45)`, approchée
     /// par des rectangles arrondis concentriques translucides.
-    fn draw_shadow(&mut self, gfx: &Gfx) -> Result<()> {
+    fn draw_shadow(&mut self, gfx: &Gfx, opacity: f32) -> Result<()> {
+        self.shadow_opacity = opacity;
         let (w, h) = self.size;
         let radius = self.radius.min(h / 2.0);
         const LAYERS: i32 = 22;
-        let per_layer = 1.0 - (1.0f32 - 0.45).powf(1.0 / LAYERS as f32);
+        let per_layer = 1.0 - (1.0f32 - 0.45 * opacity.clamp(0.0, 1.0)).powf(1.0 / LAYERS as f32);
         self.shadow_surface.draw(gfx, self.scale, |p| {
             for i in 0..LAYERS {
                 // De -22 à +22 autour du rectangle d'ombre (contenu rétréci de 20, descendu de 20).

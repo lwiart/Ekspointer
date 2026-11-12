@@ -202,8 +202,11 @@ impl Ui {
         panel.place(gfx, (x as i32, y as i32), size, radius, s)
     }
 
-    fn open_popover(&mut self, gfx: &Gfx, overlays: &Overlays, pop: Pop) -> Result<()> {
+    fn open_popover(&mut self, gfx: &Gfx, overlays: &Overlays, pop: Pop, now: u64) -> Result<()> {
         self.close_floating();
+        if self.animate {
+            self.popover.start_appear(now);
+        }
         let (item, layout) = match pop {
             Pop::Color => (Item::Color, toolbar::color_popover()),
             Pop::Width => (Item::Width, toolbar::width_popover()),
@@ -241,6 +244,9 @@ impl Ui {
             w += 2.0 + gfx.text_width(key, Family::Mono, 11.0, 500) + 16.0;
         }
         self.tip = Some(text);
+        if self.animate {
+            self.tooltip.start_appear(now);
+        }
         Self::place_under(gfx, &self.toolbar, overlays, &mut self.tooltip, anchor, (w.ceil(), TIP_H), TIP_H / 2.0)
     }
 
@@ -257,7 +263,15 @@ impl Ui {
     }
 
     /// Commande déclenchée par un clic sur un élément de la barre.
-    fn activate(&mut self, gfx: &Gfx, app: &App, overlays: &Overlays, item: Item, out: &mut Vec<UiAction>) -> Result<()> {
+    fn activate(
+        &mut self,
+        gfx: &Gfx,
+        app: &App,
+        overlays: &Overlays,
+        item: Item,
+        now: u64,
+        out: &mut Vec<UiAction>,
+    ) -> Result<()> {
         let cmd = |c: UiCommand| UiAction::Command(c);
         match item {
             Item::Tool(None) => out.push(cmd(UiCommand::SelectTool(None))),
@@ -271,7 +285,7 @@ impl Ui {
                 if self.pop == Some(pop) {
                     self.close_floating();
                 } else {
-                    self.open_popover(gfx, overlays, pop)?;
+                    self.open_popover(gfx, overlays, pop, now)?;
                 }
             }
             Item::Halo => out.push(cmd(UiCommand::ToggleHalo)),
@@ -353,7 +367,7 @@ impl Ui {
                             self.toolbar.place(gfx, (x, y), (self.layout.w, self.layout.h), theme::BAR_H / 2.0, scale)?;
                         }
                     } else if let Some(item) = pressed.filter(|i| self.layout.hit(p) == Some(*i)) {
-                        self.activate(gfx, app, overlays, item, &mut out)?;
+                        self.activate(gfx, app, overlays, item, now, &mut out)?;
                     }
                 }
                 PanelEvent::DoubleClick(p) => {
@@ -362,6 +376,16 @@ impl Ui {
                     }
                 }
                 PanelEvent::Wheel(_) => {}
+                PanelEvent::Cancel => {
+                    // La souris a été reprise (autre fenêtre, Alt+Tab) : terminer le glissement là où il est.
+                    self.pressed = None;
+                    if let Some(drag) = self.drag.take() {
+                        if drag.moved {
+                            let (x, y) = self.toolbar.pos;
+                            out.push(UiAction::Command(UiCommand::SetToolbarPos(x, y)));
+                        }
+                    }
+                }
             },
             PanelId::Popover => {
                 let Some(layout) = self.popover_layout() else {
@@ -389,7 +413,13 @@ impl Ui {
 
     /// Vrai tant qu'une animation de la barre est en cours.
     pub fn animating(&self, now: u64) -> bool {
-        self.animate && now < self.pill_start + theme::T_PILL_MS
+        self.animate
+            && (now < self.pill_start + theme::T_PILL_MS || self.popover.appearing(now) || self.tooltip.appearing(now))
+    }
+
+    /// Suit le réglage « Afficher les animations » de Windows.
+    pub fn set_animate(&mut self, animate: bool) {
+        self.animate = animate;
     }
 
     /// Redessine la barre, le volet et la bulle si nécessaire.
@@ -413,15 +443,15 @@ impl Ui {
         let pill_x = self.pill_x(now);
         let (layout, hover, pressed, mouse) = (&self.layout, self.hover, self.pressed, self.mouse);
         let collapsed = app.cfg.toolbar_collapsed;
-        self.toolbar.draw(gfx, |p| draw_toolbar(p, app, layout, hover, pressed, mouse, pill_x, active, collapsed))?;
+        self.toolbar.draw(gfx, now, |p| draw_toolbar(p, app, layout, hover, pressed, mouse, pill_x, active, collapsed))?;
 
         if let Some(pop) = self.pop {
             let hover = self.pop_hover;
-            self.popover.draw(gfx, |p| draw_popover(p, app, pop, hover))?;
+            self.popover.draw(gfx, now, |p| draw_popover(p, app, pop, hover))?;
         }
         if let Some(tip) = &self.tip {
             let w = self.tooltip.size.0;
-            self.tooltip.draw(gfx, |p| draw_tooltip(p, tip, w))?;
+            self.tooltip.draw(gfx, now, |p| draw_tooltip(p, tip, w))?;
         }
         Ok(())
     }

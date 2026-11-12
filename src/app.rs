@@ -111,7 +111,11 @@ impl App {
     }
 
     fn set_color(&mut self, color: u8) -> Vec<Effect> {
-        self.cfg.color = color.min(PALETTE.len() as u8 - 1);
+        let color = color.min(PALETTE.len() as u8 - 1);
+        if color == self.cfg.color {
+            return Vec::new();
+        }
+        self.cfg.color = color;
         vec![Effect::ConfigChanged, Effect::UiChanged]
     }
 
@@ -209,7 +213,11 @@ impl App {
             UiCommand::SelectTool(None) => self.set_draw(false),
             UiCommand::SetColor(c) => self.set_color(c),
             UiCommand::SetWidth(w) => {
-                self.cfg.width = w.min(WIDTHS.len() as u8 - 1);
+                let w = w.min(WIDTHS.len() as u8 - 1);
+                if w == self.cfg.width {
+                    return Vec::new();
+                }
+                self.cfg.width = w;
                 saved
             }
             UiCommand::ToggleHalo => self.toggle_halo(),
@@ -231,11 +239,18 @@ impl App {
                 Vec::new()
             }
             UiCommand::SetHoldSeconds(s) => {
+                // Une valeur inchangée ne réécrit pas le fichier (glissement d'un curseur).
+                if s.clamp(2, 15) == self.cfg.hold_seconds {
+                    return Vec::new();
+                }
                 self.cfg.hold_seconds = s.clamp(2, 15);
                 self.scene.set_hold_ms(self.cfg.hold_seconds as u64 * 1000);
                 saved
             }
             UiCommand::SetHaloSize(s) => {
+                if s.clamp(40, 120) == self.cfg.halo_size {
+                    return Vec::new();
+                }
                 self.cfg.halo_size = s.clamp(40, 120);
                 saved
             }
@@ -498,5 +513,18 @@ mod tests {
         assert_eq!(a.cfg.bindings.get(Action::ClearAll).to_string(), "Ctrl+Alt+E");
         let e = a.command(UiCommand::SetBinding(Action::HoldDraw, "Ctrl+Alt+X".parse().unwrap()), 0);
         assert!(matches!(e.as_slice(), [Effect::BindingRejected(_)]));
+    }
+
+    #[test]
+    fn unchanged_setting_is_not_saved_again() {
+        // Glisser un curseur sans changer de valeur ne doit pas réécrire le fichier à chaque mouvement.
+        let mut a = app();
+        assert!(a.command(UiCommand::SetHoldSeconds(5), 0).is_empty());
+        assert!(a.command(UiCommand::SetHaloSize(64), 0).is_empty());
+        assert!(a.command(UiCommand::SetWidth(1), 0).is_empty());
+        assert!(a.command(UiCommand::SetColor(0), 0).is_empty());
+        assert!(a.command(UiCommand::SetHoldSeconds(6), 0).contains(&Effect::ConfigChanged));
+        assert!(a.command(UiCommand::SetHoldSeconds(99), 0).contains(&Effect::ConfigChanged));
+        assert!(a.command(UiCommand::SetHoldSeconds(200), 0).is_empty()); // déjà à la borne
     }
 }

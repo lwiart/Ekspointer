@@ -86,7 +86,8 @@ fn draw_geometry(p: &Painter, s: &Shape, origin: Pt, pass: &Pass, appear: f32) {
 fn draw_shape(p: &Painter, app: &App, s: &Shape, origin: Pt, now: u64, animate: bool) {
     let phase = app.scene.phase(s, now);
     let opacity = app.scene.opacity(s, now);
-    if opacity <= 0.0 {
+    // Animations désactivées dans Windows : la forme disparaît d'un coup, sans fondu.
+    if opacity <= 0.0 || (!animate && matches!(phase, Phase::Fading(_))) {
         return;
     }
     let appear = match phase {

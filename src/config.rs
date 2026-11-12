@@ -86,22 +86,70 @@ pub fn default_path() -> PathBuf {
         .join("config.json")
 }
 
+/// Construit les réglages à partir d'un objet JSON, champ par champ : une valeur absente,
+/// d'un mauvais type ou illisible laisse la valeur par défaut de ce seul champ, et un nombre
+/// hors bornes est ramené dans ses bornes.
+fn lenient(value: &serde_json::Value) -> Option<Config> {
+    let obj = value.as_object()?;
+    let mut c = Config::default();
+    let number = |key: &str, max: f64| obj.get(key).and_then(|v| v.as_f64()).map(|n| n.clamp(0.0, max));
+    let flag = |key: &str, default: bool| obj.get(key).and_then(|v| v.as_bool()).unwrap_or(default);
+    if let Some(n) = number("hold_seconds", 255.0) {
+        c.hold_seconds = n as u8;
+    }
+    if let Some(n) = number("width", 255.0) {
+        c.width = n as u8;
+    }
+    if let Some(n) = number("color", 255.0) {
+        c.color = n as u8;
+    }
+    if let Some(n) = number("halo_size", 100_000.0) {
+        c.halo_size = n as u32;
+    }
+    if let Some(tool) = obj.get("last_tool").and_then(|v| serde_json::from_value(v.clone()).ok()) {
+        c.last_tool = tool;
+    }
+    if let Some(bindings) = obj.get("bindings").and_then(|v| serde_json::from_value(v.clone()).ok()) {
+        c.bindings = bindings;
+    }
+    if let Some(pos) = obj.get("toolbar_pos").and_then(|v| serde_json::from_value(v.clone()).ok()) {
+        c.toolbar_pos = pos;
+    }
+    c.halo_on = flag("halo_on", c.halo_on);
+    c.halo_follows_color = flag("halo_follows_color", c.halo_follows_color);
+    c.ripple_on = flag("ripple_on", c.ripple_on);
+    c.trail_on = flag("trail_on", c.trail_on);
+    c.pinned = flag("pinned", c.pinned);
+    c.toolbar_collapsed = flag("toolbar_collapsed", c.toolbar_collapsed);
+    c.hide_from_capture = flag("hide_from_capture", c.hide_from_capture);
+    c.sanitize();
+    Some(c)
+}
+
+/// Met de côté un fichier de réglages inutilisable et renvoie les valeurs par défaut.
+fn set_aside(path: &Path) -> (Config, LoadOutcome) {
+    let backup = path.with_file_name("config.invalide.json");
+    let _ = std::fs::remove_file(&backup);
+    let _ = std::fs::rename(path, &backup);
+    (Config::default(), LoadOutcome::Invalid { backup })
+}
+
 /// Lit les réglages. Ne renvoie jamais d'erreur : au pire, les valeurs par défaut.
+///
+/// La lecture est tolérante : marque d'ordre d'octets, encodage non UTF-8 et valeurs
+/// isolées incorrectes sont acceptés. Seul un fichier qui n'est pas un objet JSON est mis de côté.
 pub fn load(path: &Path) -> (Config, LoadOutcome) {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return (Config::default(), LoadOutcome::Defaults);
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (Config::default(), LoadOutcome::Defaults),
+        // Le fichier existe mais ne se lit pas : ne pas l'écraser en silence.
+        Err(_) => return set_aside(path),
     };
-    match serde_json::from_str::<Config>(&text) {
-        Ok(mut cfg) => {
-            cfg.sanitize();
-            (cfg, LoadOutcome::Loaded)
-        }
-        Err(_) => {
-            let backup = path.with_file_name("config.invalide.json");
-            let _ = std::fs::remove_file(&backup);
-            let _ = std::fs::rename(path, &backup);
-            (Config::default(), LoadOutcome::Invalid { backup })
-        }
+    let text = String::from_utf8_lossy(&bytes);
+    let text = text.trim_start_matches('\u{feff}');
+    match serde_json::from_str::<serde_json::Value>(text).ok().as_ref().and_then(lenient) {
+        Some(cfg) => (cfg, LoadOutcome::Loaded),
+        None => set_aside(path),
     }
 }
 
@@ -236,5 +284,60 @@ mod tests {
         let p = default_path();
         assert_eq!(p.file_name().unwrap(), "config.json");
         assert_eq!(p.parent().unwrap(), std::env::current_exe().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn one_bad_value_does_not_discard_the_whole_file() {
+        // Valeurs hors du type attendu : seule la valeur fautive est remplacée, le reste est gardé.
+        let p = tmp("config.json");
+        std::fs::write(
+            &p,
+            r#"{"hold_seconds":300,"color":-1,"width":"gros","last_tool":"Bidule","halo_size":90,"halo_on":"oui",
+                "toolbar_pos":"ici","bindings":{"ToggleDraw":"Ctrl+Alt+X"}}"#,
+        )
+        .unwrap();
+        let (c, o) = load(&p);
+        assert!(matches!(o, LoadOutcome::Loaded), "{o:?}");
+        assert_eq!(c.hold_seconds, 15); // 300 ramené à la borne
+        assert_eq!(c.color, 0); // -1 ramené à la borne
+        assert_eq!(c.width, 1); // illisible : valeur par défaut
+        assert_eq!(c.last_tool, Tool::Arrow);
+        assert_eq!(c.halo_size, 90);
+        assert!(!c.halo_on);
+        assert_eq!(c.toolbar_pos, None);
+        assert_eq!(c.bindings.get(Action::ToggleDraw).to_string(), "Ctrl+Alt+X");
+        assert!(p.exists() && !p.with_file_name("config.invalide.json").exists());
+    }
+
+    #[test]
+    fn byte_order_mark_is_accepted() {
+        // Le Bloc-notes de Windows peut enregistrer le fichier avec une marque d'ordre d'octets.
+        let p = tmp("bom.json");
+        std::fs::write(&p, "\u{feff}{\"hold_seconds\":7}").unwrap();
+        let (c, o) = load(&p);
+        assert!(matches!(o, LoadOutcome::Loaded), "{o:?}");
+        assert_eq!(c.hold_seconds, 7);
+    }
+
+    #[test]
+    fn non_utf8_file_keeps_what_can_be_read() {
+        // Fichier enregistré en ANSI : « Échap » est illisible, le reste est conservé.
+        let p = tmp("ansi.json");
+        let mut bytes = b"{\"hold_seconds\":7,\"bindings\":{\"ExitDraw\":\"".to_vec();
+        bytes.extend_from_slice(&[0xC9, b'c', b'h', b'a', b'p']);
+        bytes.extend_from_slice(b"\",\"ToolArrow\":\"A\"}}");
+        std::fs::write(&p, bytes).unwrap();
+        let (c, o) = load(&p);
+        assert!(matches!(o, LoadOutcome::Loaded), "{o:?}");
+        assert_eq!(c.hold_seconds, 7);
+        assert_eq!(c.bindings.get(Action::ToolArrow).to_string(), "A");
+        assert_eq!(c.bindings.get(Action::ExitDraw).to_string(), "Échap");
+    }
+
+    #[test]
+    fn json_that_is_not_an_object_is_invalid() {
+        let p = tmp("config.json");
+        std::fs::write(&p, "[1, 2, 3]").unwrap();
+        assert!(matches!(load(&p).1, LoadOutcome::Invalid { .. }));
     }
 }

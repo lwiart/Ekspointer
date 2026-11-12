@@ -85,8 +85,11 @@ impl SettingsView {
     }
 
     /// Ouvre le panneau au centre d'un écran.
-    pub fn open(&mut self, gfx: &Gfx, monitor: RectF, scale: f32, autostart: bool) -> Result<()> {
+    pub fn open(&mut self, gfx: &Gfx, monitor: RectF, scale: f32, autostart: bool, appear: Option<u64>) -> Result<()> {
         self.autostart = autostart;
+        if let Some(now) = appear {
+            self.panel.start_appear(now);
+        }
         self.hover = None;
         self.hover_close = false;
         self.dragging = None;
@@ -207,12 +210,13 @@ impl SettingsView {
                 }
             }
             PanelEvent::DoubleClick(_) => {}
+            PanelEvent::Cancel => self.dragging = None,
         }
         out
     }
 
-    pub fn draw(&mut self, gfx: &Gfx, app: &App) -> Result<()> {
-        if !self.dirty || !self.visible() {
+    pub fn draw(&mut self, gfx: &Gfx, app: &App, now: u64) -> Result<()> {
+        if !self.visible() || (!self.dirty && !self.panel.appearing(now)) {
             return Ok(());
         }
         self.dirty = false;
@@ -221,7 +225,7 @@ impl SettingsView {
         let capturing = view.capturing;
         let conflict = view.conflict.clone();
         let autostart = view.autostart;
-        self.panel.draw(gfx, |p| {
+        self.panel.draw(gfx, now, |p| {
             p.fill_rrect(RectF { x: 0.0, y: 0.0, w: PANEL_W, h: PANEL_H }, theme::R_PANEL, theme::BG);
             let body = RectF { x: 0.0, y: HEADER_H, w: PANEL_W, h: PANEL_H - HEADER_H };
             p.with_rrect_clip(body, 0.0, || {

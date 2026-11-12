@@ -41,6 +41,8 @@ pub enum Msg {
     Timer(usize),
     /// Un second lancement demande d'afficher la barre.
     ShowToolbar,
+    /// Un réglage de Windows a changé (par exemple « Afficher les animations »).
+    SystemSettingsChanged,
     /// Événement de souris d'un panneau de l'interface.
     Panel(panel::PanelId, panel::PanelEvent),
     /// Commande du menu de la zone de notification.

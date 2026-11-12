@@ -81,6 +81,9 @@ pub struct Filter {
     /// Plus grande combinaison de touches de modification vue pendant la saisie.
     capture_mods: Mods,
     keys: KeyState,
+    /// Les deux touches Maj, suivies séparément : en relâcher une ne lève pas la contrainte.
+    lshift: bool,
+    rshift: bool,
     /// Touches (hors modification) actuellement enfoncées.
     down: HashSet<u32>,
     /// Touches dont l'appui a été intercepté : leur relâchement le sera aussi.
@@ -110,6 +113,8 @@ impl Filter {
             tap_prev: None,
             capture_mods: Mods::default(),
             keys: KeyState::default(),
+            lshift: false,
+            rshift: false,
             down: HashSet::new(),
             swallowed: HashSet::new(),
             hold_active: false,
@@ -237,12 +242,20 @@ impl Filter {
     }
 
     fn set_modifier(&mut self, vk: u32, down: bool) -> bool {
+        if matches!(vk, VK_LSHIFT | VK_RSHIFT | 0x10) {
+            if vk == VK_RSHIFT {
+                self.rshift = down;
+            } else {
+                self.lshift = down;
+            }
+            self.keys.shift = self.lshift || self.rshift;
+            return true;
+        }
         let slot = match vk {
             VK_LCONTROL => &mut self.keys.lctrl,
             VK_RCONTROL => &mut self.keys.rctrl,
             VK_LMENU => &mut self.keys.lalt,
             VK_RMENU => &mut self.keys.ralt,
-            VK_LSHIFT | VK_RSHIFT | 0x10 => &mut self.keys.shift,
             VK_LWIN | VK_RWIN => &mut self.keys.win,
             _ => return false,
         };
@@ -438,6 +451,8 @@ impl Filter {
         }
         if actual.shift != self.keys.shift {
             events.push(InputEvent::Shift(actual.shift));
+            self.lshift = actual.shift;
+            self.rshift = actual.shift;
         }
         self.keys = actual;
         if self.hold_active && !self.hold_matches() {
@@ -855,5 +870,14 @@ mod tests {
         f.on_mouse(MouseKind::LeftUp, Pt::new(5., 5.));
         let d = key_at(&mut f, 190, 0xA2, false);
         assert!(d.events.iter().all(|e| !matches!(e, InputEvent::Action(_))));
+    }
+
+    #[test]
+    fn releasing_one_shift_keeps_the_constraint_while_the_other_is_held() {
+        let mut f = f();
+        assert!(has(&f.on_key(0xA0, true), InputEvent::Shift(true)));
+        assert!(f.on_key(0xA1, true).events.is_empty());
+        assert!(f.on_key(0xA0, false).events.is_empty()); // Maj droite toujours tenue
+        assert!(has(&f.on_key(0xA1, false), InputEvent::Shift(false)));
     }
 }

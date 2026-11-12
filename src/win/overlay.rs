@@ -26,6 +26,8 @@ struct Overlay {
     scale: f32,
     /// Rien n'a été dessiné à la dernière image : inutile de redessiner tant que rien n'apparaît.
     blank: bool,
+    /// Le halo était sur cet écran à la dernière image : il faut l'y effacer s'il en est parti.
+    halo_last: bool,
 }
 
 /// Toutes les fenêtres de dessin.
@@ -150,7 +152,7 @@ impl Overlays {
                 )?;
                 let surface = Surface::new(gfx, hwnd, rect.w as u32, rect.h as u32)?;
                 let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-                self.list.push(Overlay { hwnd, surface, rect, scale, blank: false });
+                self.list.push(Overlay { hwnd, surface, rect, scale, blank: false, halo_last: false });
             }
         }
         Ok(())
@@ -193,7 +195,10 @@ impl Overlays {
     }
 
     /// Redessine les fenêtres qui ont quelque chose à montrer (ou à effacer).
-    pub fn render(&mut self, gfx: &Gfx, app: &App, now: u64, animate: bool) -> Result<()> {
+    ///
+    /// `shapes_dirty` indique que les formes ont pu changer depuis la dernière image : sans
+    /// cela, un écran qui ne montre que des formes immobiles n'est pas redessiné.
+    pub fn render(&mut self, gfx: &Gfx, app: &App, now: u64, animate: bool, shapes_dirty: bool) -> Result<()> {
         let has_shapes = !app.scene.shapes().is_empty();
         let has_effects = !app.pointer.ripples().is_empty() || !app.pointer.trail(now).is_empty();
         let margin = app.cfg.halo_size as f32;
@@ -206,7 +211,9 @@ impl Overlays {
             };
             let halo_here = app.cfg.halo_on && near.contains(app.pointer.pos());
             let content = has_shapes || has_effects || halo_here;
-            if !content && o.blank {
+            let needed = (has_shapes && shapes_dirty) || has_effects || halo_here || o.halo_last || content == o.blank;
+            o.halo_last = halo_here;
+            if !needed {
                 continue;
             }
             let origin = Pt::new(o.rect.x, o.rect.y);

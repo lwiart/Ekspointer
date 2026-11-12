@@ -231,9 +231,14 @@ impl Surface {
 
     /// Efface en transparent, dessine avec `f` (unités multipliées par `scale`), présente.
     pub fn draw(&mut self, gfx: &Gfx, scale: f32, f: impl FnOnce(&Painter)) -> Result<()> {
+        self.draw_shifted(gfx, scale, 0.0, f)
+    }
+
+    /// Comme `draw`, avec un décalage vertical de `dy` pixels physiques.
+    pub fn draw_shifted(&mut self, gfx: &Gfx, scale: f32, dy: f32, f: impl FnOnce(&Painter)) -> Result<()> {
         unsafe {
             self.ctx.BeginDraw();
-            self.ctx.SetTransform(&Matrix3x2 { M11: scale, M12: 0.0, M21: 0.0, M22: scale, M31: 0.0, M32: 0.0 });
+            self.ctx.SetTransform(&Matrix3x2 { M11: scale, M12: 0.0, M21: 0.0, M22: scale, M31: 0.0, M32: dy });
             self.ctx.Clear(Some(&D2D1_COLOR_F { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }));
             f(&Painter { ctx: &self.ctx, gfx, brush: &self.brush });
             self.ctx.EndDraw(None, None)?;

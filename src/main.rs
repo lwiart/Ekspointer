@@ -90,6 +90,10 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
                 win::post(Msg::DisplayChanged);
                 LRESULT(0)
             }
+            WM_SETTINGCHANGE => {
+                win::post(Msg::SystemSettingsChanged);
+                LRESULT(0)
+            }
             win::WM_APP_SHOW => {
                 win::post(Msg::ShowToolbar);
                 LRESULT(0)
@@ -159,6 +163,8 @@ struct Shell {
     capturable: bool,
     /// Instant de la dernière recréation des ressources graphiques (0 : jamais).
     last_recovery: u64,
+    /// Les formes ont pu changer depuis la dernière image.
+    shapes_dirty: bool,
     start: Instant,
     cfg_path: PathBuf,
     /// Faux en démonstration : les réglages ne sont pas écrits.
@@ -233,7 +239,8 @@ impl Shell {
         let bar = self.ui.toolbar.rect();
         let center = Pt::new(bar.x + bar.w / 2.0, bar.y + bar.h / 2.0);
         let (monitor, scale) = self.overlays.monitor_at(center).unwrap_or(self.overlays.primary());
-        if let Err(e) = self.settings.open(&self.gfx, monitor, scale, autostart::is_enabled()) {
+        let appear = self.animate.then(|| self.now());
+        if let Err(e) = self.settings.open(&self.gfx, monitor, scale, autostart::is_enabled(), appear) {
             log::error(&format!("ouverture des réglages : {e}"));
         }
     }
@@ -345,7 +352,15 @@ impl Shell {
     }
 
     fn handle(&mut self, msg: Msg, now: u64) {
+        // Un simple mouvement ou clic de souris ne change pas les formes ; tout le reste le peut.
+        if !matches!(msg, Msg::Input(InputEvent::PointerMove(_) | InputEvent::Click(..))) {
+            self.shapes_dirty = true;
+        }
         match msg {
+            Msg::SystemSettingsChanged => {
+                self.animate = animations_enabled();
+                self.ui.set_animate(self.animate);
+            }
             Msg::Input(ev @ (InputEvent::Captured(_) | InputEvent::CaptureCancelled)) => self.capture_result(ev, now),
             Msg::Input(ev) => {
                 let overlays = &self.overlays;
@@ -431,13 +446,14 @@ impl Shell {
 
     fn render(&mut self, now: u64) {
         let mut failure = None;
-        if let Err(e) = self.overlays.render(&self.gfx, &self.app, now, self.animate) {
+        let shapes_dirty = std::mem::take(&mut self.shapes_dirty);
+        if let Err(e) = self.overlays.render(&self.gfx, &self.app, now, self.animate, shapes_dirty) {
             failure = Some(format!("rendu des formes : {e}"));
         }
         if let Err(e) = self.ui.draw(&self.gfx, &self.app, now) {
             failure = Some(format!("dessin de l'interface : {e}"));
         }
-        if let Err(e) = self.settings.draw(&self.gfx, &self.app) {
+        if let Err(e) = self.settings.draw(&self.gfx, &self.app, now) {
             failure = Some(format!("dessin des réglages : {e}"));
         }
         if let Some(reason) = failure {
@@ -629,6 +645,7 @@ fn run(args: Args) -> Result<()> {
         main,
         capturable: args.capturable,
         last_recovery: 0,
+        shapes_dirty: true,
         start: Instant::now(),
         cfg_path,
         save_enabled: !demo,
@@ -682,7 +699,10 @@ fn run(args: Args) -> Result<()> {
         for m in win::drain() {
             shell.handle(m, now);
         }
-        animating = shell.app.tick(now) | shell.ui.animating(now);
+        animating = shell.app.tick(now) | shell.ui.animating(now) | shell.settings.panel.appearing(now);
+        if animating {
+            shell.shapes_dirty = true;
+        }
         shell.render(now);
         dirty = false;
         if animating {

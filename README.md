@@ -46,7 +46,7 @@ Sur un clavier français, AltGr n'est jamais pris pour `Ctrl+Alt` : seules les t
 
 Les formes et les effets sont visibles par vos interlocuteurs quand vous partagez **l'écran entier**. Si vous ne partagez qu'une fenêtre ou un onglet, l'outil de visio ne les transmet pas.
 
-Par défaut, la barre d'outils est masquée du partage d'écran : seuls les tracés sont transmis. Cela se change dans les réglages.
+Par défaut, la barre d'outils est masquée du partage d'écran : seuls les tracés sont transmis. Cela se change dans les réglages. Ce masquage demande Windows 10 version 2004 ou plus récent.
 
 ## Compilation
 

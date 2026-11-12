@@ -201,7 +201,7 @@ Les trois sont indépendants et fonctionnent dans tous les modes. Leur état est
 
 Les formes et les effets de pointeur sont visibles par les apprenants quand l'écran entier est partagé. Ils ne le sont pas si seule une fenêtre ou un onglet est partagé : c'est une limite du partage de fenêtre, pas d'Ekspointer.
 
-Option « Masquer la barre d'outils du partage d'écran », activée par défaut : la barre, les volets et le panneau de réglages sont exclus de la capture (`SetWindowDisplayAffinity`), les apprenants ne voient que les annotations.
+Option « Masquer la barre d'outils du partage d'écran », activée par défaut : la barre, les volets et le panneau de réglages sont exclus de la capture (`SetWindowDisplayAffinity`), les apprenants ne voient que les annotations. Ce masquage exige Windows 10 version 2004 ou plus récent ; sur une version plus ancienne, la barre reste visible dans le partage et l'échec est noté dans le journal.
 
 ## 6. Architecture
 
