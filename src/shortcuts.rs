@@ -50,7 +50,7 @@ pub fn normalize_vk(vk: u32) -> u32 {
 pub const DOUBLE_TAP_MS: u64 = 400;
 
 /// Touches de modification utilisables en double appui : nom et code.
-const DOUBLE_MODS: [(&str, u32); 4] = [("Ctrl", 0xA2), ("Alt", 0xA4), ("Maj", 0xA0), ("Win", 0x5B)];
+const DOUBLE_MODS: [(&str, u32); 2] = [("Ctrl", 0xA2), ("Maj", 0xA0)];
 
 /// Vrai pour une touche de modification utilisable en double appui.
 pub fn is_double_modifier(vk: u32) -> bool {
@@ -58,18 +58,24 @@ pub fn is_double_modifier(vk: u32) -> bool {
 }
 
 /// Code canonique d'une touche pour le double appui, ou `None` si elle n'y est pas
-/// utilisable : Ctrl droit et Alt droit (AltGr) ne comptent jamais.
+/// utilisable : Ctrl droit et Alt droit (AltGr) ne comptent jamais, ni Alt et Win, qui
+/// ouvrent un menu quand on les tape seuls.
 pub fn double_tap_vk(vk: u32) -> Option<u32> {
     match vk {
         0xA1 => Some(0xA0),
-        0x5C => Some(0x5B),
-        0xA3 | 0xA5 | 0x10 | 0x11 | 0x12 => None,
+        0xA3 | 0xA4 | 0xA5 | 0x5B | 0x5C | 0x10 | 0x11 | 0x12 => None,
         _ => Some(normalize_vk(vk)),
     }
 }
 
 /// Touches nommées, hors lettres, chiffres et F1–F12.
-const NAMED_KEYS: [(&str, u32); 9] = [
+const NAMED_KEYS: [(&str, u32); 15] = [
+    ("Retour arrière", 0x08),
+    ("Inser", 0x2D),
+    ("Début", 0x24),
+    ("Fin", 0x23),
+    ("PgPréc", 0x21),
+    ("PgSuiv", 0x22),
     ("Échap", 0x1B),
     ("Espace", 0x20),
     ("Entrée", 0x0D),
@@ -110,7 +116,11 @@ fn key_from_name(name: &str) -> Option<u32> {
         "space" => return Some(0x20),
         _ => {}
     }
-    NAMED_KEYS.iter().find(|(n, _)| n.to_lowercase() == lower).map(|(_, v)| *v)
+    if let Some(v) = NAMED_KEYS.iter().find(|(n, _)| n.to_lowercase() == lower).map(|(_, v)| *v) {
+        return Some(v);
+    }
+    // Touche sans nom, écrite « Touche<code> » : ponctuation, touche ², pavé numérique, etc.
+    lower.strip_prefix("touche").and_then(|n| n.parse::<u32>().ok()).filter(|v| (1..=0xFE).contains(v)).map(normalize_vk)
 }
 
 impl fmt::Display for Shortcut {
@@ -331,6 +341,39 @@ impl KeyState {
     }
 }
 
+/// Raison du refus d'un raccourci.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BindError {
+    /// Le raccourci est déjà pris par cette action.
+    Conflict(Action),
+    /// Le raccourci ne convient pas à l'action ; le texte explique pourquoi.
+    Invalid(&'static str),
+}
+
+/// Vérifie qu'un raccourci convient à une action, indépendamment des autres raccourcis.
+pub fn validate(action: Action, s: Shortcut) -> Result<(), &'static str> {
+    if action == Action::HoldDraw {
+        return if s.key.is_none() && !s.mods.is_empty() && !s.double {
+            Ok(())
+        } else {
+            Err("Ce raccourci se maintient : utilisez seulement Ctrl, Alt, Maj ou Win.")
+        };
+    }
+    let Some(key) = s.key else {
+        return Err("Ajoutez une touche à ce raccourci.");
+    };
+    if s.double {
+        return Ok(());
+    }
+    // Un raccourci actif partout ne doit pas être une touche de frappe ordinaire : il serait
+    // intercepté dans toutes les applications.
+    let function_key = (0x70..=0x7B).contains(&key);
+    if action.is_global() && !(s.mods.ctrl || s.mods.alt || s.mods.win || function_key) {
+        return Err("Ajoutez Ctrl, Alt ou Win, ou choisissez une touche de fonction.");
+    }
+    Ok(())
+}
+
 /// Affectation des raccourcis aux actions.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Bindings(BTreeMap<Action, Shortcut>);
@@ -350,11 +393,13 @@ impl Bindings {
         self.0.get(&a).copied().unwrap_or_else(|| a.default_shortcut())
     }
 
-    /// Affecte un raccourci. Refuse s'il est déjà pris, en nommant l'action en conflit.
-    pub fn set(&mut self, a: Action, s: Shortcut) -> Result<(), Action> {
+    /// Affecte un raccourci. Refuse s'il ne convient pas à l'action, ou s'il est déjà pris
+    /// (en nommant alors l'action en conflit).
+    pub fn set(&mut self, a: Action, s: Shortcut) -> Result<(), BindError> {
         let s = s.normalized();
+        validate(a, s).map_err(BindError::Invalid)?;
         if let Some((other, _)) = self.0.iter().find(|(o, v)| **o != a && v.normalized() == s) {
-            return Err(*other);
+            return Err(BindError::Conflict(*other));
         }
         self.0.insert(a, s);
         Ok(())
@@ -397,7 +442,9 @@ impl<'de> Deserialize<'de> for Bindings {
         let mut b = Bindings::defaults();
         for (name, value) in &raw {
             if let (Some(a), Ok(s)) = (Action::from_name(name), value.parse::<Shortcut>()) {
-                b.0.insert(a, s.normalized());
+                if validate(a, s).is_ok() {
+                    b.0.insert(a, s.normalized());
+                }
             }
         }
         loop {
@@ -472,7 +519,7 @@ mod tests {
     #[test]
     fn conflicts_are_refused_and_named() {
         let mut b = Bindings::defaults();
-        assert_eq!(b.set(Action::ToolRect, sc("F")), Err(Action::ToolArrow));
+        assert_eq!(b.set(Action::ToolRect, sc("F")), Err(BindError::Conflict(Action::ToolArrow)));
         assert_eq!(b.get(Action::ToolRect).to_string(), "R");
         assert!(b.set(Action::ToolRect, sc("R")).is_ok()); // réaffecter sa propre valeur
         assert!(b.set(Action::ToolRect, sc("Ctrl+Alt+R")).is_ok());
@@ -483,7 +530,7 @@ mod tests {
     fn numpad_and_top_row_digits_conflict() {
         let mut b = Bindings::defaults();
         let numpad1 = Shortcut { mods: Mods::default(), key: Some(0x61), double: false };
-        assert_eq!(b.set(Action::ToolRect, numpad1), Err(Action::Color(0)));
+        assert_eq!(b.set(Action::ToolRect, numpad1), Err(BindError::Conflict(Action::Color(0))));
     }
 
     #[test]
@@ -549,7 +596,7 @@ mod tests {
 
     #[test]
     fn double_tap_parse_display_roundtrip() {
-        for s in ["2×Tab", "2×Ctrl", "2×Maj", "2×Alt", "2×F", "2×Échap"] {
+        for s in ["2×Tab", "2×Ctrl", "2×Maj", "2×F", "2×Échap"] {
             assert_eq!(sc(s).to_string(), s);
             assert!(sc(s).double);
         }
@@ -569,7 +616,7 @@ mod tests {
     fn double_tap_bindings() {
         let mut b = Bindings::defaults();
         assert!(b.set(Action::ToggleDraw, sc("2×Tab")).is_ok());
-        assert_eq!(b.set(Action::ClearAll, sc("2×Tab")), Err(Action::ToggleDraw));
+        assert_eq!(b.set(Action::ClearAll, sc("2×Tab")), Err(BindError::Conflict(Action::ToggleDraw)));
         assert_eq!(b.double_action_for(0x09, false), Some(Action::ToggleDraw));
         assert_eq!(b.double_action_for(0x41, false), None);
         assert_eq!(b.action_for(sc("Tab"), true), None); // un seul appui ne déclenche rien
@@ -584,10 +631,14 @@ mod tests {
     #[test]
     fn double_tap_key_normalization() {
         assert_eq!(double_tap_vk(0xA1), Some(0xA0)); // Maj droite -> Maj
-        assert_eq!(double_tap_vk(0x5C), Some(0x5B)); // Win droite -> Win
         assert_eq!(double_tap_vk(0xA2), Some(0xA2)); // Ctrl gauche
         assert_eq!(double_tap_vk(0xA3), None); // Ctrl droit : ne compte jamais
         assert_eq!(double_tap_vk(0xA5), None); // AltGr : ne compte jamais
+        // Alt et Win ouvrent des menus quand on les tape seuls : pas de double appui dessus.
+        assert_eq!(double_tap_vk(0xA4), None);
+        assert_eq!(double_tap_vk(0x5B), None);
+        assert!("2×Alt".parse::<Shortcut>().is_err());
+        assert!("2×Win".parse::<Shortcut>().is_err());
         assert_eq!(double_tap_vk(0x61), Some(0x31)); // pavé numérique
     }
 
@@ -596,5 +647,72 @@ mod tests {
         let b: Bindings = serde_json::from_str(r#"{"ToolArrow":"R","ToolRect":"F"}"#).unwrap();
         assert_eq!(b.get(Action::ToolArrow).to_string(), "R");
         assert_eq!(b.get(Action::ToolRect).to_string(), "F");
+    }
+
+    fn invalid(r: Result<(), BindError>) -> bool {
+        matches!(r, Err(BindError::Invalid(_)))
+    }
+
+    #[test]
+    fn global_shortcuts_must_not_be_plain_typing_keys() {
+        let mut b = Bindings::defaults();
+        // Une lettre seule, ou Maj+lettre, avalerait la frappe dans toutes les applications.
+        assert!(invalid(b.set(Action::ClearAll, sc("E"))));
+        assert!(invalid(b.set(Action::ClearAll, sc("Maj+E"))));
+        assert!(invalid(b.set(Action::ToggleDraw, sc("Espace"))));
+        assert_eq!(b.get(Action::ClearAll).to_string(), "Ctrl+Alt+E");
+        assert!(b.set(Action::ClearAll, sc("Ctrl+E")).is_ok());
+        assert!(b.set(Action::ClearAll, sc("F8")).is_ok()); // une touche de fonction seule est admise
+        assert!(b.set(Action::ToggleHalo, sc("Win+H")).is_ok());
+    }
+
+    #[test]
+    fn one_shot_actions_need_a_key() {
+        let mut b = Bindings::defaults();
+        assert!(invalid(b.set(Action::ToggleDraw, sc("Ctrl"))));
+        assert!(invalid(b.set(Action::ToolArrow, sc("Ctrl+Maj"))));
+        assert!(b.set(Action::ToolArrow, sc("A")).is_ok()); // en mode dessin, une lettre seule convient
+    }
+
+    #[test]
+    fn hold_action_takes_modifiers_only() {
+        let mut b = Bindings::defaults();
+        assert!(invalid(b.set(Action::HoldDraw, sc("Ctrl+Alt+X"))));
+        assert!(invalid(b.set(Action::HoldDraw, sc("2×Ctrl"))));
+        assert!(invalid(b.set(Action::HoldDraw, sc("X"))));
+        assert_eq!(b.get(Action::HoldDraw).to_string(), "Ctrl+Alt");
+        assert!(b.set(Action::HoldDraw, sc("Ctrl+Maj")).is_ok());
+    }
+
+    #[test]
+    fn invalid_shapes_in_a_file_fall_back_to_defaults() {
+        let b: Bindings =
+            serde_json::from_str(r#"{"ClearAll":"E","ToggleDraw":"Ctrl","HoldDraw":"Ctrl+Alt+X","ToolRect":"X"}"#).unwrap();
+        assert_eq!(b.get(Action::ClearAll).to_string(), "Ctrl+Alt+E");
+        assert_eq!(b.get(Action::ToggleDraw).to_string(), "Ctrl+Alt+D");
+        assert_eq!(b.get(Action::HoldDraw).to_string(), "Ctrl+Alt");
+        assert_eq!(b.get(Action::ToolRect).to_string(), "X");
+    }
+
+    #[test]
+    fn every_key_the_capture_can_emit_survives_a_restart() {
+        // Toute touche, nommée ou non, doit pouvoir être relue depuis le fichier de réglages.
+        for vk in 0x08u32..=0xFE {
+            if matches!(vk, 0x10..=0x12 | 0x5B | 0x5C | 0xA0..=0xA5) {
+                continue; // touches de modification
+            }
+            let s = Shortcut { mods: Mods { ctrl: true, ..Default::default() }, key: Some(vk), double: false }.normalized();
+            let text = s.to_string();
+            assert_eq!(text.parse::<Shortcut>().as_ref(), Ok(&s), "touche {vk:#x} affichée « {text} »");
+        }
+    }
+
+    #[test]
+    fn common_keys_have_french_names() {
+        for (vk, name) in [(0x08, "Retour arrière"), (0x2D, "Inser"), (0x24, "Début"), (0x23, "Fin"), (0x21, "PgPréc"), (0x22, "PgSuiv")] {
+            let s = Shortcut { mods: Mods { ctrl: true, ..Default::default() }, key: Some(vk), double: false };
+            assert_eq!(s.to_string(), format!("Ctrl+{name}"));
+        }
+        assert_eq!(sc("Ctrl+Touche222").key, Some(222)); // touche ² du clavier français
     }
 }

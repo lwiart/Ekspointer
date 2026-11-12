@@ -157,6 +157,8 @@ struct Shell {
     main: HWND,
     /// Option de test : l'interface reste visible dans les captures d'écran.
     capturable: bool,
+    /// Instant de la dernière recréation des ressources graphiques (0 : jamais).
+    last_recovery: u64,
     start: Instant,
     cfg_path: PathBuf,
     /// Faux en démonstration : les réglages ne sont pas écrits.
@@ -207,7 +209,7 @@ impl Shell {
                     self.settings.dirty = true;
                 }
                 Effect::CaptureAffinityChanged => self.apply_capture_affinity(),
-                Effect::BindingConflict(_) => {}
+                Effect::BindingConflict(_) | Effect::BindingRejected(_) => {}
             }
         }
     }
@@ -271,11 +273,14 @@ impl Shell {
         };
         let effects = self.app.command(UiCommand::SetBinding(action, shortcut), now);
         for e in &effects {
-            if let Effect::BindingConflict(other) = e {
-                self.settings.show_conflict(action, conflict_message(shortcut, *other), now + CONFLICT_MS);
-                unsafe {
-                    SetTimer(Some(self.main), TIMER_CONFLICT, CONFLICT_MS as u32 + 50, None);
-                }
+            let message = match e {
+                Effect::BindingConflict(other) => conflict_message(shortcut, *other),
+                Effect::BindingRejected(reason) => reason.to_string(),
+                _ => continue,
+            };
+            self.settings.show_conflict(action, message, now + CONFLICT_MS);
+            unsafe {
+                SetTimer(Some(self.main), TIMER_CONFLICT, CONFLICT_MS as u32 + 50, None);
             }
         }
         self.apply(effects);
@@ -348,6 +353,12 @@ impl Shell {
                 self.apply(effects);
                 if matches!(ev, InputEvent::Click(..) | InputEvent::StrokeBegin(_)) {
                     self.ui.on_click_outside();
+                    // Un clic hors des réglages abandonne la saisie d'un raccourci : sinon la
+                    // prochaine touche tapée ailleurs serait avalée et deviendrait le raccourci.
+                    if self.settings.capturing.take().is_some() {
+                        input::with_filter(|f| f.set_capturing(false));
+                        self.settings.dirty = true;
+                    }
                 }
                 if matches!(ev, InputEvent::HoldStart) {
                     unsafe {
@@ -419,26 +430,65 @@ impl Shell {
     }
 
     fn render(&mut self, now: u64) {
+        let mut failure = None;
         if let Err(e) = self.overlays.render(&self.gfx, &self.app, now, self.animate) {
-            // Périphérique graphique perdu : tout recréer, en conservant les formes.
-            log::error(&format!("rendu : {e} ; recréation du périphérique graphique"));
-            match Gfx::new() {
-                Ok(gfx) => {
-                    self.gfx = gfx;
-                    if let Err(e) = self.overlays.rebuild(&self.gfx) {
-                        log::error(&format!("recréation des fenêtres de dessin : {e}"));
-                    }
-                    self.overlays.set_capture(self.app.draw_mode);
-                }
-                Err(e) => log::error(&format!("périphérique graphique indisponible : {e}")),
-            }
+            failure = Some(format!("rendu des formes : {e}"));
         }
         if let Err(e) = self.ui.draw(&self.gfx, &self.app, now) {
-            log::error(&format!("dessin de l'interface : {e}"));
+            failure = Some(format!("dessin de l'interface : {e}"));
         }
         if let Err(e) = self.settings.draw(&self.gfx, &self.app) {
-            log::error(&format!("dessin des réglages : {e}"));
+            failure = Some(format!("dessin des réglages : {e}"));
         }
+        if let Some(reason) = failure {
+            self.recover(&reason, now);
+        }
+    }
+
+    /// Périphérique graphique perdu (pilote mis à jour, changement de carte, veille) : recrée
+    /// toutes les ressources de rendu, des fenêtres de dessin comme de l'interface. Les formes,
+    /// la position de la barre et l'état des réglages sont conservés.
+    fn recover(&mut self, reason: &str, now: u64) {
+        // Au plus une tentative par seconde, pour ne pas tourner en boucle si le périphérique reste indisponible.
+        if self.last_recovery != 0 && now.saturating_sub(self.last_recovery) < 1000 {
+            return;
+        }
+        self.last_recovery = now.max(1);
+        log::error(&format!("{reason} ; recréation des ressources graphiques"));
+        let gfx = match Gfx::new() {
+            Ok(gfx) => gfx,
+            Err(e) => {
+                log::error(&format!("périphérique graphique indisponible : {e}"));
+                return;
+            }
+        };
+        self.gfx = gfx;
+        if let Err(e) = self.overlays.rebuild(&self.gfx) {
+            log::error(&format!("recréation des fenêtres de dessin : {e}"));
+        }
+        self.overlays.set_capture(self.app.draw_mode);
+
+        let toolbar_visible = self.ui.toolbar_visible();
+        match Ui::new(&self.gfx, &self.app, &self.overlays, self.animate) {
+            Ok(ui) => self.ui = ui,
+            Err(e) => log::error(&format!("recréation de la barre d'outils : {e}")),
+        }
+        if !toolbar_visible {
+            self.show_toolbar(false);
+        }
+        let settings_open = self.settings.visible();
+        match SettingsView::new(&self.gfx) {
+            Ok(settings) => {
+                self.settings = settings;
+                input::with_filter(|f| f.set_capturing(false));
+                if settings_open {
+                    self.toggle_settings();
+                }
+            }
+            Err(e) => log::error(&format!("recréation des réglages : {e}")),
+        }
+        self.apply_capture_affinity();
+        self.sync_exempt_rects();
     }
 
     /// Arme le minuteur qui réveillera la boucle quand une forme devra commencer son fondu.
@@ -578,6 +628,7 @@ fn run(args: Args) -> Result<()> {
         app,
         main,
         capturable: args.capturable,
+        last_recovery: 0,
         start: Instant::now(),
         cfg_path,
         save_enabled: !demo,
@@ -586,6 +637,11 @@ fn run(args: Args) -> Result<()> {
     };
     shell.apply_capture_affinity();
     shell.sync_exempt_rects();
+    // Position de départ du pointeur, pour que le halo n'apparaisse pas dans un coin de l'écran.
+    let mut cursor = windows::Win32::Foundation::POINT::default();
+    if unsafe { GetCursorPos(&mut cursor) }.is_ok() {
+        win::post(Msg::Input(InputEvent::PointerMove(Pt::new(cursor.x as f32, cursor.y as f32))));
+    }
     unsafe {
         SetTimer(Some(main), TIMER_TRIM, TRIM_DELAY_MS, None);
     }

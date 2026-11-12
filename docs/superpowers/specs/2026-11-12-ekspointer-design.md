@@ -36,6 +36,7 @@ Hors périmètre : texte, zoom, tableau blanc, capture ou enregistrement d'écra
 - Fenêtres et entrées : API Win32 via la crate `windows`.
 - Rendu : Direct3D 11 + DXGI + DirectComposition + Direct2D, texte par DirectWrite. Repli sur le rendu logiciel WARP si aucune carte graphique n'est utilisable.
 - Réglages : `serde` et `serde_json`.
+- Les deux écoutes vivent sur un fil d'exécution dédié, qui ne fait rien d'autre : Windows attend leur réponse avant de livrer chaque frappe et chaque mouvement, elles ne doivent donc jamais patienter derrière le rendu.
 - Aucune autre dépendance à l'exécution. Pas de WebView, pas de bibliothèque d'interface.
 - Polices embarquées dans l'exécutable (licence OFL), en sous-ensembles latins : Instrument Sans (libellés) et Noto Sans Mono (étiquettes, raccourcis). Chargement en mémoire par DirectWrite. Repli sur Segoe UI et Consolas si le chargement échoue.
 - Icônes de l'interface : tracés vectoriels définis dans le code, aucune image.
@@ -141,8 +142,10 @@ Tous sont modifiables dans les réglages.
 **Double appui** (ajout demandé par l'utilisateur le 13/11/2026). Un raccourci global peut être, au choix, une combinaison de touches ou un double appui rapide sur une même touche, par exemple `2×Tab` ou `2×Ctrl`. Les deux appuis doivent se suivre en moins de 400 ms, sans autre touche entre eux.
 
 - Touche ordinaire (`2×Tab`) : le premier appui atteint l'application en cours, car rien ne permet encore de savoir qu'un second suivra. Le second est intercepté et déclenche l'action.
-- Touche de modification (`2×Ctrl`, `2×Maj`, `2×Alt`, `2×Win`) : rien n'atteint l'application, l'action se déclenche au second relâchement. C'est le choix le plus discret.
-- Une touche de modification utilisée dans un raccourci (`Ctrl+C` deux fois) ou AltGr ne comptent pas comme un double appui.
+- Touche de modification (`2×Ctrl` ou `2×Maj`) : l'action se déclenche au second relâchement, sans effet dans l'application en cours. C'est le choix le plus discret. Alt et Win ne sont pas proposés : tapés seuls, ils ouvrent un menu.
+- Une touche de modification utilisée dans un raccourci (`Ctrl+C` deux fois), suivie d'un clic (`Ctrl+clic` deux fois) ou AltGr ne comptent pas comme un double appui.
+
+**Raccourcis refusés.** Pour ne jamais gêner la frappe, un raccourci global (bascule du dessin, tout effacer, halo) doit comporter Ctrl, Alt ou Win, ou être une touche de fonction : une lettre seule serait interceptée dans toutes les applications. Le raccourci de maintien ne comporte que des touches de modification. Un raccourci refusé affiche sa raison sous la ligne, comme un conflit. Cliquer hors du panneau abandonne une saisie en cours.
 
 Sur un clavier français, la touche AltGr est vue par Windows comme `Ctrl+Alt`. Ekspointer ne compte donc que les touches Ctrl et Alt **de gauche** : AltGr ne déclenche jamais un raccourci, et la saisie de `@`, `#` ou `{` n'est pas perturbée.
 
@@ -281,7 +284,8 @@ Contenu : version du format, durée d'effacement, épaisseur, couleur courante, 
 - **`config.json` illisible ou invalide** : il est renommé en `config.invalide.json`, les valeurs par défaut sont utilisées, une notification le signale.
 - **Champ inconnu ou manquant** : ignoré ou remplacé par sa valeur par défaut, sans erreur.
 - **Dossier non inscriptible** (version portable sur support protégé) : les réglages restent en mémoire pour la session, une notification le signale une fois.
-- **Périphérique graphique perdu** (mise en veille, changement de pilote) : les ressources de rendu sont recréées, les formes en cours sont conservées.
+- **Périphérique graphique perdu** (mise en veille, changement de pilote) : toutes les ressources de rendu sont recréées, celles des fenêtres de dessin comme celles de la barre et des réglages. Les formes en cours, la position de la barre et l'état des réglages sont conservés.
+- **Relâchement de touche non vu** (écran de verrouillage, fenêtre d'une application élevée) : avant chaque frappe, l'état mémorisé est recalé sur l'état réel du clavier, pour qu'une touche crue enfoncée ne bloque ni le maintien ni le double appui.
 - **Aucune accélération graphique** : repli sur WARP.
 - **Échec de l'écoute clavier ou souris au démarrage** : message d'erreur explicite, puis arrêt. L'application est inutilisable sans elle.
 - **Erreur inattendue** : écrite dans `ekspointer.log` à côté de l'exécutable (limité à 1 Mo). Les fenêtres de dessin repassent en mode traversant avant tout arrêt, pour ne jamais laisser l'écran bloqué.

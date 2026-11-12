@@ -17,8 +17,9 @@ pub mod tray;
 pub mod ui;
 
 use ekspointer::input_filter::InputEvent;
-use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::{Mutex, MutexGuard};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_APP};
 
@@ -46,29 +47,33 @@ pub enum Msg {
     Tray(tray::TrayCommand),
 }
 
-thread_local! {
-    static QUEUE: RefCell<VecDeque<Msg>> = const { RefCell::new(VecDeque::new()) };
-    static NOTIFY: Cell<HWND> = const { Cell::new(HWND(std::ptr::null_mut())) };
+/// File des messages en attente. Le fil des écoutes y dépose, la boucle principale la vide.
+static QUEUE: Mutex<VecDeque<Msg>> = Mutex::new(VecDeque::new());
+/// Fenêtre à réveiller quand un message est déposé (0 tant qu'elle n'existe pas).
+static NOTIFY: AtomicIsize = AtomicIsize::new(0);
+
+fn queue() -> MutexGuard<'static, VecDeque<Msg>> {
+    QUEUE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Désigne la fenêtre à réveiller quand un message est déposé.
 pub fn set_notify(hwnd: HWND) {
-    NOTIFY.with(|n| n.set(hwnd));
+    NOTIFY.store(hwnd.0 as isize, Ordering::SeqCst);
 }
 
 /// Dépose un message pour la boucle principale et la réveille si elle dort.
 pub fn post(msg: Msg) {
-    let was_empty = QUEUE.with(|q| {
-        let mut q = q.borrow_mut();
+    let was_empty = {
+        let mut q = queue();
         let empty = q.is_empty();
         q.push_back(msg);
         empty
-    });
+    };
     if was_empty {
-        let hwnd = NOTIFY.with(|n| n.get());
-        if !hwnd.0.is_null() {
+        let hwnd = NOTIFY.load(Ordering::SeqCst);
+        if hwnd != 0 {
             unsafe {
-                let _ = PostMessageW(Some(hwnd), WM_APP_WAKE, WPARAM(0), LPARAM(0));
+                let _ = PostMessageW(Some(HWND(hwnd as *mut core::ffi::c_void)), WM_APP_WAKE, WPARAM(0), LPARAM(0));
             }
         }
     }
@@ -76,5 +81,5 @@ pub fn post(msg: Msg) {
 
 /// Retire tous les messages en attente.
 pub fn drain() -> Vec<Msg> {
-    QUEUE.with(|q| q.borrow_mut().drain(..).collect())
+    queue().drain(..).collect()
 }

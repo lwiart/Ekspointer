@@ -189,3 +189,42 @@ fn demo_mode_never_writes_settings() {
     assert!(s.wait(0, SHUTDOWN).is_some());
     assert!(!s.file("config.json").exists());
 }
+
+/// Envoie un appui ou un relâchement de touche au système, comme le ferait le clavier.
+fn send_key(vk: u16, down: bool) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VIRTUAL_KEY,
+    };
+    let flags = if down { KEYBD_EVENT_FLAGS(0) } else { KEYEVENTF_KEYUP };
+    let input = INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VIRTUAL_KEY(vk), dwFlags: flags, ..Default::default() } },
+    };
+    unsafe {
+        SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
+    }
+    std::thread::sleep(Duration::from_millis(30));
+}
+
+#[test]
+#[ignore = "lance le vrai exécutable et envoie Ctrl+Alt+H au système"]
+fn global_shortcut_goes_through_the_real_keyboard_hook() {
+    // De bout en bout : écoute bas niveau sur son fil, filtre, application, enregistrement.
+    let mut s = Sandbox::new();
+    let first = s.start();
+    for (vk, down) in [(0xA2, true), (0xA4, true), (0x48, true), (0x48, false), (0xA4, false), (0xA2, false)] {
+        send_key(vk, down);
+    }
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(json(&s.file("config.json"))["halo_on"], true, "Ctrl+Alt+H n'a pas atteint l'application");
+
+    // Un second appui l'éteint : l'écoute fonctionne toujours après une première interception.
+    for (vk, down) in [(0xA2, true), (0xA4, true), (0x48, true), (0x48, false), (0xA4, false), (0xA2, false)] {
+        send_key(vk, down);
+    }
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(json(&s.file("config.json"))["halo_on"], false);
+
+    s.run(&["--quit"], QUICK);
+    assert_eq!(s.wait(first, SHUTDOWN).expect("l'instance ne s'est pas fermée").code(), Some(0));
+}

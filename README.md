@@ -38,7 +38,7 @@ Il y a deux façons de dessiner :
 | Annuler la dernière forme | `Ctrl+Z` (en mode dessin) |
 | Contraindre (angle de 15°, carré, cercle, ligne droite) | `Maj` pendant le tracé |
 
-Tous les raccourcis se changent dans les réglages. Les raccourcis globaux peuvent être une combinaison de touches ou un **double appui** rapide sur une même touche, par exemple `2×Ctrl` ou `2×Tab`. Avec une touche ordinaire comme Tab, le premier appui atteint l'application en cours ; avec une touche de modification comme Ctrl, rien ne l'atteint.
+Tous les raccourcis se changent dans les réglages. Les raccourcis globaux peuvent être une combinaison de touches ou un **double appui** rapide sur une même touche, par exemple `2×Ctrl` ou `2×Tab`. Avec une touche ordinaire comme Tab, le premier appui atteint l'application en cours ; avec Ctrl ou Maj, le double appui est sans effet dans l'application. Un raccourci global doit comporter Ctrl, Alt ou Win (ou être une touche de fonction), pour ne jamais gêner la frappe.
 
 Sur un clavier français, AltGr n'est jamais pris pour `Ctrl+Alt` : seules les touches Ctrl et Alt de gauche comptent.
 

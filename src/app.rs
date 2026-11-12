@@ -5,7 +5,7 @@ use crate::geom::{Pt, Rgba, PALETTE, WIDTHS};
 use crate::input_filter::InputEvent;
 use crate::pointer::Pointer;
 use crate::shapes::{Scene, Tool};
-use crate::shortcuts::{Action, Bindings, Shortcut};
+use crate::shortcuts::{Action, BindError, Bindings, Shortcut};
 use crate::ui::theme;
 
 /// Commande venue de l'interface (barre d'outils, réglages).
@@ -45,6 +45,8 @@ pub enum Effect {
     CaptureAffinityChanged,
     /// Le raccourci demandé est déjà pris par cette action.
     BindingConflict(Action),
+    /// Le raccourci demandé ne convient pas à l'action ; le texte explique pourquoi.
+    BindingRejected(&'static str),
 }
 
 /// État complet de l'application.
@@ -243,7 +245,8 @@ impl App {
             }
             UiCommand::SetBinding(action, shortcut) => match self.cfg.bindings.set(action, shortcut) {
                 Ok(()) => vec![Effect::FilterChanged, Effect::ConfigChanged, Effect::UiChanged],
-                Err(other) => vec![Effect::BindingConflict(other)],
+                Err(BindError::Conflict(other)) => vec![Effect::BindingConflict(other)],
+                Err(BindError::Invalid(reason)) => vec![Effect::BindingRejected(reason)],
             },
             UiCommand::ResetBindings => {
                 self.cfg.bindings = Bindings::defaults();
@@ -485,5 +488,15 @@ mod tests {
         assert_eq!(a.halo_color(), PALETTE[1]);
         a.command(UiCommand::SetHaloFollowsColor(false), 0);
         assert_eq!(a.halo_color(), theme::EMBER);
+    }
+
+    #[test]
+    fn invalid_binding_is_rejected_with_a_reason() {
+        let mut a = app();
+        let e = a.command(UiCommand::SetBinding(Action::ClearAll, "E".parse().unwrap()), 0);
+        assert!(matches!(e.as_slice(), [Effect::BindingRejected(reason)] if !reason.is_empty()));
+        assert_eq!(a.cfg.bindings.get(Action::ClearAll).to_string(), "Ctrl+Alt+E");
+        let e = a.command(UiCommand::SetBinding(Action::HoldDraw, "Ctrl+Alt+X".parse().unwrap()), 0);
+        assert!(matches!(e.as_slice(), [Effect::BindingRejected(_)]));
     }
 }

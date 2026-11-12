@@ -8,6 +8,9 @@ use crate::shortcuts::{
 };
 use std::collections::HashSet;
 
+/// Délai sans appui ni répétition au bout duquel une touche interceptée est jugée relâchée.
+pub const STALE_SWALLOWED_MS: u64 = 1500;
+
 pub const VK_ESCAPE: u32 = 0x1B;
 pub const VK_LSHIFT: u32 = 0xA0;
 pub const VK_RSHIFT: u32 = 0xA1;
@@ -69,6 +72,8 @@ pub struct Filter {
     now: u64,
     /// Toutes les touches physiquement enfoncées.
     held: HashSet<u32>,
+    /// Instant du dernier appui (ou de la dernière répétition) de chaque touche interceptée.
+    swallowed_at: std::collections::HashMap<u32, u64>,
     /// Appui isolé en cours : touche et instant de l'appui.
     tap_cur: Option<(u32, u64)>,
     /// Dernier appui isolé terminé : touche et instant de l'appui.
@@ -100,6 +105,7 @@ impl Filter {
             capture_double: false,
             now: 0,
             held: HashSet::new(),
+            swallowed_at: std::collections::HashMap::new(),
             tap_cur: None,
             tap_prev: None,
             capture_mods: Mods::default(),
@@ -297,12 +303,16 @@ impl Filter {
         let vk = normalize_vk(vk);
         if !down {
             self.down.remove(&vk);
+            self.swallowed_at.remove(&vk);
             d.swallow = self.swallowed.remove(&vk);
             return d;
         }
         if !self.down.insert(vk) {
             // Répétition clavier : même sort que l'appui initial, sans nouvel événement.
             d.swallow = self.swallowed.contains(&vk);
+            if d.swallow {
+                self.swallowed_at.insert(vk, self.now);
+            }
             return d;
         }
 
@@ -310,6 +320,7 @@ impl Filter {
             self.end_hold(&mut d.events);
             d.events.push(InputEvent::Action(action));
             self.swallowed.insert(vk);
+            self.swallowed_at.insert(vk, self.now);
             d.swallow = true;
             return d;
         }
@@ -325,6 +336,7 @@ impl Filter {
             });
             self.set_capturing(false);
             self.swallowed.insert(vk);
+            self.swallowed_at.insert(vk, self.now);
             d.swallow = true;
             return d;
         }
@@ -334,6 +346,7 @@ impl Filter {
         if let Some(action) = self.bindings.action_for(pressed, self.draw_mode) {
             d.events.push(InputEvent::Action(action));
             self.swallowed.insert(vk);
+            self.swallowed_at.insert(vk, self.now);
             d.swallow = true;
         }
         d
@@ -342,6 +355,11 @@ impl Filter {
     pub fn on_mouse(&mut self, kind: MouseKind, p: Pt) -> Decision {
         let mut d = Decision::default();
         let exempt = self.exempt.iter().any(|r| r.contains(p));
+        if kind != MouseKind::Move {
+            // Ctrl+clic deux fois de suite n'est pas un double appui sur Ctrl.
+            self.tap_cur = None;
+            self.tap_prev = None;
+        }
         match kind {
             MouseKind::Move => {
                 d.events.push(InputEvent::PointerMove(p));
@@ -380,6 +398,35 @@ impl Filter {
             MouseKind::RightUp => {}
         }
         d
+    }
+
+    /// Oublie les touches que le filtre croit enfoncées et qui ne le sont plus, d'après l'état
+    /// réel du clavier (`is_down` reçoit un code de touche virtuelle). Rattrape un relâchement
+    /// que l'écoute n'a pas vu : écran de verrouillage, fenêtre d'une application élevée.
+    pub fn prune_keys(&mut self, is_down: &dyn Fn(u32) -> bool) {
+        // Les codes mémorisés sont canoniques : un chiffre peut venir du pavé numérique,
+        // et Maj de l'une ou l'autre touche.
+        let (now, swallowed_at) = (self.now, &self.swallowed_at);
+        let really_down = |vk: u32| {
+            // Une touche interceptée n'apparaît jamais comme enfoncée dans l'état du clavier :
+            // elle est jugée tenue tant que son dernier appui ou sa dernière répétition est récent.
+            if let Some(at) = swallowed_at.get(&vk) {
+                return now.saturating_sub(*at) < STALE_SWALLOWED_MS;
+            }
+            is_down(vk)
+                || ((0x30..=0x39).contains(&vk) && is_down(vk + 0x30))
+                || (vk == VK_LSHIFT && is_down(VK_RSHIFT))
+        };
+        let before = self.held.len() + self.down.len();
+        self.down.retain(|vk| really_down(*vk));
+        self.swallowed.retain(|vk| really_down(*vk));
+        self.held.retain(|vk| really_down(*vk));
+        let swallowed = &self.swallowed;
+        self.swallowed_at.retain(|vk, _| swallowed.contains(vk));
+        if self.held.len() + self.down.len() != before {
+            self.tap_cur = None;
+            self.tap_prev = None;
+        }
     }
 
     /// Recale l'état des touches de modification sur l'état réel du clavier, pour
@@ -721,5 +768,92 @@ mod tests {
         assert!(has(&f.on_key(0x1B, true), InputEvent::CaptureCancelled));
         f.set_capturing_double();
         assert!(f.on_key(0xA5, true).events.is_empty()); // AltGr n'est pas une touche valable
+    }
+
+    #[test]
+    fn stale_key_blocks_hold_until_pruned() {
+        // Win+L : le relâchement de L part vers l'écran de verrouillage et n'est jamais vu.
+        let mut f = f();
+        f.on_key(0x4C, true);
+        f.on_key(0xA2, true);
+        assert!(f.on_key(0xA4, true).events.is_empty(), "une touche restée « enfoncée » empêche le maintien");
+        f.on_key(0xA4, false);
+        f.on_key(0xA2, false);
+
+        f.prune_keys(&|_| false); // l'état réel du clavier : plus aucune touche enfoncée
+        f.on_key(0xA2, true);
+        assert!(has(&f.on_key(0xA4, true), InputEvent::HoldStart));
+    }
+
+    #[test]
+    fn stale_swallowed_key_fires_again_after_pruning() {
+        let mut f = f();
+        f.set_draw_mode(true);
+        assert!(has(&f.on_key(0x1B, true), InputEvent::Action(Action::ExitDraw)));
+        // Relâchement manqué : sans élagage, l'appui suivant serait pris pour une répétition.
+        assert!(f.on_key(0x1B, true).events.is_empty());
+        f.set_now(10_000); // plus aucun appui ni répétition depuis longtemps
+        f.prune_keys(&|_| false);
+        let d = f.on_key(0x1B, true);
+        assert!(d.swallow && has(&d, InputEvent::Action(Action::ExitDraw)));
+    }
+
+    #[test]
+    fn pruning_keeps_keys_that_are_really_down() {
+        let mut f = f();
+        f.set_draw_mode(true);
+        assert!(has(&f.on_key(0x46, true), InputEvent::Action(Action::ToolArrow)));
+        f.prune_keys(&|vk| vk == 0x46);
+        let d = f.on_key(0x46, true); // répétition clavier d'une touche toujours tenue
+        assert!(d.swallow && d.events.is_empty());
+        // Chiffre du pavé numérique tenu : son code canonique est celui de la rangée du haut.
+        assert!(has(&f.on_key(0x61, true), InputEvent::Action(Action::Color(0))));
+        f.prune_keys(&|vk| vk == 0x61);
+        assert!(f.on_key(0x61, true).events.is_empty());
+    }
+
+    #[test]
+    fn swallowed_key_still_held_is_not_pruned_from_keyboard_state() {
+        // Windows ne marque pas comme enfoncée une touche que l'écoute a interceptée : l'état du
+        // clavier ne prouve donc rien pour elle. Tant qu'elle se répète, elle est tenue.
+        let mut f = f();
+        f.on_key(0xA2, true);
+        f.on_key(0xA4, true);
+        f.set_now(1000);
+        assert!(has(&f.on_key(0x44, true), InputEvent::Action(Action::ToggleDraw)));
+        for t in [1500u64, 1530, 1560, 1590] {
+            f.set_now(t);
+            f.prune_keys(&|vk| vk == 0xA2 || vk == 0xA4); // D absente de l'état du clavier
+            let d = f.on_key(0x44, true); // répétition clavier
+            assert!(d.swallow && d.events.is_empty(), "la bascule ne doit pas se redéclencher à {t} ms");
+        }
+        f.prune_keys(&|vk| vk == 0xA2 || vk == 0xA4);
+        assert!(f.on_key(0x44, false).swallow);
+    }
+
+    #[test]
+    fn pruning_a_stale_key_restores_double_tap() {
+        let mut f = double_ctrl();
+        key_at(&mut f, 0, 0x4C, true); // L resté « enfoncé »
+        f.prune_keys(&|_| false);
+        key_at(&mut f, 1000, 0xA2, true);
+        key_at(&mut f, 1040, 0xA2, false);
+        key_at(&mut f, 1150, 0xA2, true);
+        assert!(has(&key_at(&mut f, 1190, 0xA2, false), InputEvent::Action(Action::ToggleDraw)));
+    }
+
+    #[test]
+    fn mouse_click_cancels_a_double_tap() {
+        // Deux Ctrl+clic rapprochés ne sont pas un double appui sur Ctrl.
+        let mut f = double_ctrl();
+        key_at(&mut f, 0, 0xA2, true);
+        f.on_mouse(MouseKind::LeftDown, Pt::new(5., 5.));
+        f.on_mouse(MouseKind::LeftUp, Pt::new(5., 5.));
+        key_at(&mut f, 40, 0xA2, false);
+        key_at(&mut f, 150, 0xA2, true);
+        f.on_mouse(MouseKind::LeftDown, Pt::new(5., 5.));
+        f.on_mouse(MouseKind::LeftUp, Pt::new(5., 5.));
+        let d = key_at(&mut f, 190, 0xA2, false);
+        assert!(d.events.iter().all(|e| !matches!(e, InputEvent::Action(_))));
     }
 }

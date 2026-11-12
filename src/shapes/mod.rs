@@ -180,6 +180,8 @@ impl Scene {
             ShapeKind::Arrow { from: a, to: b } | ShapeKind::Rect { a, b } | ShapeKind::Ellipse { a, b } => {
                 a.dist(*b) / s.scale < MIN_SIZE
             }
+            // Un surligneur d'un seul point ne se dessine pas.
+            ShapeKind::Highlighter { pts } => pts.len() < 2,
             _ => false,
         };
         if too_small {
@@ -519,5 +521,17 @@ mod tests {
         let first = s.shapes()[0].clone();
         assert!(!matches!(s.phase(&first, 50), Phase::Drawing));
         assert_eq!(s.shapes().len(), 2);
+    }
+
+    #[test]
+    fn single_click_highlighter_is_dropped() {
+        // Un point seul ne se dessine pas : il ne doit ni vivre 5 s ni absorber un Ctrl+Z.
+        let mut s = scene();
+        draw(&mut s, Tool::Arrow, Pt::new(0., 0.), Pt::new(100., 0.), 0);
+        s.begin(Tool::Highlighter, Pt::new(5., 5.), 0, 5.0, 1.0, 0);
+        s.release(0);
+        assert_eq!(s.shapes().len(), 1);
+        s.undo();
+        assert!(s.shapes().is_empty());
     }
 }
