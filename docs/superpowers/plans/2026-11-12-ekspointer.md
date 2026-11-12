@@ -1084,3 +1084,77 @@ Expected: les deux fichiers dans `dist/`. Puis, à la main :
 - [ ] **Step 4: Corriger les écarts**, relancer `cargo test` et `scripts\build-release.ps1`.
 
 - [ ] **Step 5: Commit** — `git commit -m "Recette finale et corrections"`
+
+---
+
+### Task 18: Tests d'intégration de la logique
+
+À exécuter juste après la tâche 9. Les tests unitaires vivent dans chaque module (`#[cfg(test)]`) ; les tests d'intégration vivent dans `tests/` et n'utilisent que l'interface publique de la crate, en enchaînant plusieurs modules comme le fera l'application.
+
+**Files:**
+- Create: `tests/common/mod.rs`, `tests/drawing_flow.rs`, `tests/hold_flow.rs`, `tests/settings_flow.rs`, `tests/config_persistence.rs`
+
+**Interfaces:**
+- Consumes: `Filter`, `App`, `Effect`, `InputEvent`, `UiCommand`, `config::{load, save}`, `Scene`, `Phase`.
+- Produces: `common::Rig { pub filter: Filter, pub app: App, pub now: u64 }` avec `Rig::new()`, `key(&mut self, vk: u32, down: bool) -> bool` (renvoie `swallow`), `mouse(&mut self, kind: MouseKind, x: f32, y: f32) -> bool`, `command(&mut self, cmd: UiCommand)`, `advance(&mut self, ms: u64)` (avance le temps et appelle `app.tick`). `Rig` fait ce que fera `main.rs` : il passe chaque événement du filtre à `App::input` et applique `Effect::FilterChanged` au filtre (`set_draw_mode`, `set_bindings`).
+
+- [ ] **Step 1: Écrire `tests/common/mod.rs` et les tests**
+
+`drawing_flow.rs` :
+- `toggle_draw_arrow_then_fade` : `Ctrl+Alt+D` (touches 0xA2, 0xA4, 0x44 puis relâchements) ; `StrokeBegin`/`StrokeMove`/`StrokeEnd` injectés comme le ferait la fenêtre de dessin de (100,100) à (400,100) ; une forme `Arrow` existe ; `advance(5000)` → phase `Fading` ; `advance(700)` → scène vide.
+- `keys_change_tool_and_color_only_in_draw_mode` : hors mode dessin, `R` n'est pas avalé et l'outil reste `Arrow` ; en mode dessin, `R` puis `4` sont avalés, l'outil vaut `Rect` et la couleur 3.
+- `escape_returns_to_normal_and_letters_pass_again` : après `Échap`, `F` n'est plus avalé.
+- `undo_and_clear_all_shortcuts` : trois formes, `Ctrl+Z` en laisse deux, `Ctrl+Alt+E` puis `advance(250)` vide la scène.
+
+`hold_flow.rs` :
+- `hold_draws_without_entering_draw_mode` : Ctrl et Alt gauches tenus, `LeftDown` avalé, déplacement non avalé, `LeftUp` avalé, relâchement des touches ; `draw_mode` est resté faux et une forme existe.
+- `altgr_typing_never_draws` : 0xA2 puis 0xA5 tenus, `LeftDown` non avalé, scène vide.
+- `hold_uses_last_tool_chosen_in_toolbar` : `SelectTool(Some(Ellipse))`, `SelectTool(None)`, puis maintien et glisser → forme `Ellipse`.
+- `stuck_modifier_is_recovered` : maintien, `LeftDown`, puis `filter.resync(KeyState::default())` passé à l'application ; la forme est terminée, `hold` est faux, le clic suivant n'est pas avalé.
+
+`settings_flow.rs` :
+- `captured_shortcut_becomes_active` : `set_capturing(true)`, saisie de `Ctrl+Alt+X`, l'événement `Captured` est converti en `SetBinding(ToggleDraw, ..)` ; ensuite `Ctrl+Alt+X` bascule le mode dessin et `Ctrl+Alt+D` ne fait plus rien.
+- `conflicting_capture_keeps_old_binding` : saisie de `F` pour le rectangle → `BindingConflict(ToolArrow)`, `R` sélectionne toujours le rectangle.
+- `hold_duration_change_applies_to_next_shape` : `SetHoldSeconds(2)`, une forme, `advance(2100)` → `Fading`.
+- `pin_keeps_shapes_until_unpinned` : `TogglePin`, une forme, `advance(60_000)` → toujours là ; `TogglePin`, `advance(5700)` → scène vide.
+
+`config_persistence.rs` (dossier temporaire dédié par test) :
+- `state_survives_restart` : commandes `SetColor(3)`, `SetWidth(2)`, `ToggleHalo`, `SetHaloSize(90)`, `SelectTool(Some(Highlighter))`, `SetBinding(ToggleDraw, Ctrl+Alt+X)`, `SetToolbarPos(300, 40)` ; `save` ; `load` ; `App::new` sur la configuration relue retrouve couleur, épaisseur, halo, taille, dernier outil, raccourci et position.
+- `corrupt_file_recovers_to_working_app` : fichier illisible → `LoadOutcome::Invalid`, sauvegarde `config.invalide.json` présente, et l'application construite sur le résultat accepte `Ctrl+Alt+D`.
+- `save_is_atomic` : après `save`, aucun fichier `.tmp` ne reste et le fichier relu est du JSON valide.
+
+- [ ] **Step 2: Lancer** `cargo test --tests` — Expected: les tests compilent et passent si les tâches 3 à 9 sont correctes. Un échec ici désigne un défaut d'assemblage entre modules : le corriger dans le module concerné, avec d'abord un test unitaire qui le reproduit.
+
+- [ ] **Step 3: Vérifier que les tests détectent une régression** : inverser temporairement `ctrl = lctrl && !ralt` en `ctrl = lctrl` dans `shortcuts.rs`, constater que `altgr_typing_never_draws` échoue, puis rétablir.
+
+- [ ] **Step 4: Commit** — `git commit -m "Tests d'intégration de la logique"`
+
+---
+
+### Task 19: Tests d'intégration de l'exécutable
+
+À exécuter juste après la tâche 14. Ces tests lancent le vrai `ekspointer.exe` (`env!("CARGO_BIN_EXE_ekspointer")`) copié dans un dossier temporaire, pour ne pas toucher aux réglages du développeur. Ils ouvrent de vraies fenêtres : ils sont marqués `#[ignore]` et lancés explicitement, un à la fois.
+
+**Files:**
+- Create: `tests/process.rs`
+- Modify: `scripts/build-release.ps1` (tâche 16 : ajouter l'appel ci-dessous après `cargo test`)
+
+**Interfaces:**
+- Consumes: arguments `--capturable` et `--quit`, mutex `Ekspointer.Instance`, classe de fenêtre `EkspointerMain`, emplacement de `config.json`.
+
+- [ ] **Step 1: Écrire les tests**
+
+- `starts_and_quits_cleanly` : lance l'exécutable avec `--capturable`, attend jusqu'à 5 s que le processus soit en vie et que `--quit` (second lancement) renvoie le code 0 ; le premier processus se termine en moins de 3 s avec le code 0.
+- `second_instance_exits_immediately` : avec une instance en cours, un second lancement sans argument se termine en moins de 2 s avec le code 0, et la première instance est toujours en vie.
+- `writes_config_next_to_executable_on_quit` : le dossier temporaire ne contient pas de `config.json` au départ ; après lancement puis `--quit`, soit le fichier n'existe pas (aucun changement), soit il est du JSON valide ; aucun fichier n'a été créé hors de ce dossier (vérifier l'absence de `%APPDATA%\Ekspointer`).
+- `invalid_config_is_backed_up_at_startup` : `config.json` contenant `{` est déposé avant le lancement ; après démarrage puis `--quit`, `config.invalide.json` existe.
+- `quit_without_running_instance_is_a_noop` : `--quit` seul se termine avec le code 0 en moins de 2 s.
+
+Chaque test tue le processus en fin de test s'il vit encore.
+
+- [ ] **Step 2: Lancer**
+
+Run: `cargo test --test process -- --ignored --test-threads=1`
+Expected: PASS (5 tests).
+
+- [ ] **Step 3: Commit** — `git commit -m "Tests d'intégration de l'exécutable"`
