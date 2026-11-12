@@ -3,3 +3,5 @@
 *.log
 config.json
 config.invalide.json
+/.superpowers
+/.cargo/config.toml
