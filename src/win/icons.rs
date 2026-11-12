@@ -134,9 +134,13 @@ pub fn draw_logo(p: &Painter, r: RectF) {
     g.rrect(2.5, 8.5, 19.0, 11.0, 2.2);
     g.line((12.0, 19.5), (12.0, 22.0));
     g.line((8.0, 22.3), (16.0, 22.3));
+    // Nuages du décollage, au bas de l'écran.
+    for (x, y, radius) in [(5.6, 17.4, 1.3), (8.2, 17.8, 1.1), (10.8, 17.4, 1.4), (13.6, 17.8, 1.1), (16.2, 17.5, 1.3), (18.6, 17.7, 1.1)] {
+        g.dot((x, y), radius, theme::INK);
+    }
     // Flèche qui décolle de l'écran : un fond clair la détache du cadre, puis la flèche encre.
-    let (from, to) = (g.at(7.5, 16.0), g.at(18.5, 2.5));
-    let w = 2.3 * g.k();
+    let (from, to) = (g.at(7.5, 16.0), g.at(18.8, 2.2));
+    let w = 2.4 * g.k();
     let outline = arrow_outline(from, to, w);
     p.stroke_poly(&outline, true, theme::BG, 2.6 * g.k(), true);
     p.fill_poly(&outline, theme::INK);

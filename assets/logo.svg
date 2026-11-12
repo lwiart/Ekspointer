@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+<rect x="6" y="6" width="244" height="244" rx="56" fill="#FCFDFE" stroke="#CEDEE6" stroke-width="4"/>
+<rect x="61.5" y="103.5" width="133.0" height="77.0" rx="16.8" fill="none" stroke="#003C58" stroke-width="13.3"/>
+<path d="M128.0,180.5 V199.4 M98.6,200.79999999999998 H157.39999999999998" fill="none" stroke="#003C58" stroke-width="13.3" stroke-linecap="round"/>
+<circle cx="83.2" cy="165.8" r="10.5" fill="#003C58"/>
+<circle cx="97.2" cy="169.3" r="8.4" fill="#003C58"/>
+<circle cx="114.0" cy="166.5" r="11.2" fill="#003C58"/>
+<circle cx="130.8" cy="169.3" r="8.4" fill="#003C58"/>
+<circle cx="146.2" cy="167.2" r="9.8" fill="#003C58"/>
+<circle cx="161.6" cy="169.3" r="7.7" fill="#003C58"/>
+<circle cx="174.2" cy="166.5" r="9.1" fill="#003C58"/>
+<path d="M96.50,156.00 L138.64,85.78 L117.02,84.05 L175.60,59.40 L162.99,121.69 L157.03,100.84 L96.50,156.00 Z" fill="#FCFDFE" stroke="#FCFDFE" stroke-width="19.6" stroke-linejoin="round"/>
+<path d="M96.50,156.00 L138.64,85.78 L117.02,84.05 L175.60,59.40 L162.99,121.69 L157.03,100.84 L96.50,156.00 Z" fill="#003C58" stroke="#003C58" stroke-width="3.5" stroke-linejoin="round"/>
+<circle cx="94.4" cy="158.1" r="15.4" fill="#FCFDFE"/>
+<circle cx="94.4" cy="158.1" r="10.8" fill="#F0631F"/>
+</svg>

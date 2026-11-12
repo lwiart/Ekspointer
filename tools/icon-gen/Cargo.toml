@@ -1,0 +1,10 @@
+[package]
+name = "icon-gen"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Génère l'icône et les images de l'assistant d'installation d'Ekspointer"
+
+[dependencies]
+resvg = { version = "0.45", default-features = false }
+ico = "0.4"
