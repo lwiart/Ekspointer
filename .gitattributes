@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.iss text eol=crlf
+*.ico binary
+*.ttf binary
+*.bmp binary
