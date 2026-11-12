@@ -80,6 +80,7 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
         let before = read_keys();
         let decision = with_filter(|f| {
             let mut events = f.resync(before);
+            f.set_now(info.time as u64);
             let mut d = f.on_key(info.vkCode, down);
             events.append(&mut d.events);
             Decision { swallow: d.swallow, events }

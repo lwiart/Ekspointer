@@ -3,7 +3,9 @@
 
 use crate::geom::{Pt, RectF};
 use crate::pointer::Button;
-use crate::shortcuts::{normalize_vk, Action, Bindings, KeyState, Mods, Shortcut};
+use crate::shortcuts::{
+    double_tap_vk, is_double_modifier, normalize_vk, Action, Bindings, KeyState, Mods, Shortcut, DOUBLE_TAP_MS,
+};
 use std::collections::HashSet;
 
 pub const VK_ESCAPE: u32 = 0x1B;
@@ -61,6 +63,16 @@ pub struct Filter {
     draw_mode: bool,
     exempt: Vec<RectF>,
     capturing: bool,
+    /// La saisie en cours attend une touche seule, pour un double appui.
+    capture_double: bool,
+    /// Instant courant, fourni par l'appelant avant chaque événement.
+    now: u64,
+    /// Toutes les touches physiquement enfoncées.
+    held: HashSet<u32>,
+    /// Appui isolé en cours : touche et instant de l'appui.
+    tap_cur: Option<(u32, u64)>,
+    /// Dernier appui isolé terminé : touche et instant de l'appui.
+    tap_prev: Option<(u32, u64)>,
     /// Plus grande combinaison de touches de modification vue pendant la saisie.
     capture_mods: Mods,
     keys: KeyState,
@@ -85,6 +97,11 @@ impl Filter {
             draw_mode: false,
             exempt: Vec::new(),
             capturing: false,
+            capture_double: false,
+            now: 0,
+            held: HashSet::new(),
+            tap_cur: None,
+            tap_prev: None,
             capture_mods: Mods::default(),
             keys: KeyState::default(),
             down: HashSet::new(),
@@ -111,7 +128,83 @@ impl Filter {
     /// Active la saisie d'un raccourci : la prochaine combinaison est capturée.
     pub fn set_capturing(&mut self, on: bool) {
         self.capturing = on;
+        self.capture_double = false;
         self.capture_mods = Mods::default();
+    }
+
+    /// Active la saisie d'une touche seule, enregistrée comme double appui.
+    pub fn set_capturing_double(&mut self) {
+        self.set_capturing(true);
+        self.capture_double = true;
+    }
+
+    /// Fixe l'instant courant (millisecondes), à appeler avant chaque événement clavier.
+    pub fn set_now(&mut self, now: u64) {
+        self.now = now;
+    }
+
+    /// Suit les appuis isolés pour reconnaître un double appui. Renvoie l'action à déclencher.
+    ///
+    /// Un appui est isolé si aucune autre touche n'est enfoncée entre son appui et son
+    /// relâchement. Une touche ordinaire déclenche au second appui ; une touche de
+    /// modification au second relâchement, pour ne pas confondre avec un raccourci ou AltGr.
+    fn track_tap(&mut self, raw: u32, down: bool) -> Option<Action> {
+        let Some(vk) = double_tap_vk(raw) else {
+            if down {
+                self.held.insert(raw);
+            } else {
+                self.held.remove(&raw);
+            }
+            self.tap_cur = None;
+            self.tap_prev = None;
+            return None;
+        };
+        let is_mod = is_double_modifier(vk);
+        if down {
+            if !self.held.insert(vk) {
+                return None; // répétition clavier
+            }
+            if self.held.len() > 1 {
+                self.tap_cur = None;
+                self.tap_prev = None;
+                return None;
+            }
+            if let Some((prev, t0)) = self.tap_prev {
+                if prev != vk {
+                    self.tap_prev = None;
+                } else if !is_mod && self.now.saturating_sub(t0) <= DOUBLE_TAP_MS {
+                    if let Some(action) = self.bindings.double_action_for(vk, self.draw_mode) {
+                        self.tap_prev = None;
+                        self.tap_cur = None;
+                        return Some(action);
+                    }
+                }
+            }
+            self.tap_cur = Some((vk, self.now));
+            None
+        } else {
+            self.held.remove(&vk);
+            match self.tap_cur.take() {
+                Some((cur, t)) if cur == vk => {
+                    if is_mod {
+                        if let Some((prev, t0)) = self.tap_prev {
+                            if prev == vk && t.saturating_sub(t0) <= DOUBLE_TAP_MS {
+                                if let Some(action) = self.bindings.double_action_for(vk, self.draw_mode) {
+                                    self.tap_prev = None;
+                                    return Some(action);
+                                }
+                            }
+                        }
+                    }
+                    self.tap_prev = Some((vk, t));
+                    None
+                }
+                _ => {
+                    self.tap_prev = None;
+                    None
+                }
+            }
+        }
     }
 
     /// Vrai tant que la combinaison de maintien est tenue.
@@ -156,9 +249,26 @@ impl Filter {
         let shift_before = self.keys.shift;
         let mods_before = self.keys.mods();
 
+        // Double appui : hors saisie d'un raccourci.
+        let was_held = double_tap_vk(vk).is_some_and(|v| self.held.contains(&v));
+        let double_action = if self.capturing { None } else { self.track_tap(vk, down) };
+
         if self.set_modifier(vk, down) {
             if self.keys.shift != shift_before {
                 d.events.push(InputEvent::Shift(self.keys.shift));
+            }
+            if let Some(action) = double_action {
+                d.events.push(InputEvent::Action(action));
+            }
+            if self.capturing && self.capture_double {
+                if down && !was_held {
+                    if let Some(key) = double_tap_vk(vk) {
+                        let shortcut = Shortcut { mods: Mods::default(), key: Some(key), double: true };
+                        d.events.push(InputEvent::Captured(shortcut));
+                        self.set_capturing(false);
+                    }
+                }
+                return d;
             }
             if self.capturing {
                 let now = self.keys.mods();
@@ -166,7 +276,7 @@ impl Filter {
                     self.capture_mods = now;
                 }
                 if !down && !self.capture_mods.is_empty() {
-                    d.events.push(InputEvent::Captured(Shortcut { mods: self.capture_mods, key: None }));
+                    d.events.push(InputEvent::Captured(Shortcut { mods: self.capture_mods, key: None, double: false }));
                     self.set_capturing(false);
                 }
                 return d;
@@ -196,12 +306,22 @@ impl Filter {
             return d;
         }
 
+        if let Some(action) = double_action {
+            self.end_hold(&mut d.events);
+            d.events.push(InputEvent::Action(action));
+            self.swallowed.insert(vk);
+            d.swallow = true;
+            return d;
+        }
+
         if self.capturing {
             let mods = self.keys.mods();
-            d.events.push(if vk == VK_ESCAPE && mods.is_empty() {
+            d.events.push(if vk == VK_ESCAPE && (mods.is_empty() || self.capture_double) {
                 InputEvent::CaptureCancelled
+            } else if self.capture_double {
+                InputEvent::Captured(Shortcut { mods: Mods::default(), key: Some(vk), double: true })
             } else {
-                InputEvent::Captured(Shortcut { mods, key: Some(vk) })
+                InputEvent::Captured(Shortcut { mods, key: Some(vk), double: false })
             });
             self.set_capturing(false);
             self.swallowed.insert(vk);
@@ -210,7 +330,7 @@ impl Filter {
         }
 
         self.end_hold(&mut d.events);
-        let pressed = Shortcut { mods: self.keys.mods(), key: Some(vk) };
+        let pressed = Shortcut { mods: self.keys.mods(), key: Some(vk), double: false };
         if let Some(action) = self.bindings.action_for(pressed, self.draw_mode) {
             d.events.push(InputEvent::Action(action));
             self.swallowed.insert(vk);
@@ -489,5 +609,117 @@ mod tests {
         f.set_bindings(b);
         f.on_key(0xA2, true);
         assert!(has(&f.on_key(0xA0, true), InputEvent::HoldStart));
+    }
+
+    fn double_tab() -> Filter {
+        let mut b = Bindings::defaults();
+        b.set(Action::ToggleDraw, "2×Tab".parse().unwrap()).unwrap();
+        Filter::new(b)
+    }
+
+    fn key_at(f: &mut Filter, t: u64, vk: u32, down: bool) -> Decision {
+        f.set_now(t);
+        f.on_key(vk, down)
+    }
+
+    const TAB: u32 = 0x09;
+
+    #[test]
+    fn double_tap_fires_on_second_press() {
+        let mut f = double_tab();
+        let d = key_at(&mut f, 0, TAB, true);
+        assert!(!d.swallow && d.events.is_empty()); // le premier appui atteint l'application
+        assert!(!key_at(&mut f, 50, TAB, false).swallow);
+        let d = key_at(&mut f, 200, TAB, true);
+        assert!(d.swallow && has(&d, InputEvent::Action(Action::ToggleDraw)));
+        assert!(key_at(&mut f, 250, TAB, false).swallow);
+        // Un troisième appui isolé ne déclenche rien.
+        let d = key_at(&mut f, 300, TAB, true);
+        assert!(!d.swallow && d.events.is_empty());
+    }
+
+    #[test]
+    fn double_tap_too_slow_does_nothing() {
+        let mut f = double_tab();
+        key_at(&mut f, 0, TAB, true);
+        key_at(&mut f, 50, TAB, false);
+        let d = key_at(&mut f, 500, TAB, true);
+        assert!(!d.swallow && d.events.is_empty());
+        key_at(&mut f, 550, TAB, false);
+        // Cet appui tardif compte comme le premier d'une nouvelle paire.
+        assert!(has(&key_at(&mut f, 700, TAB, true), InputEvent::Action(Action::ToggleDraw)));
+    }
+
+    #[test]
+    fn double_tap_is_cancelled_by_another_key() {
+        let mut f = double_tab();
+        key_at(&mut f, 0, TAB, true);
+        key_at(&mut f, 30, TAB, false);
+        key_at(&mut f, 60, 0x41, true);
+        key_at(&mut f, 90, 0x41, false);
+        assert!(key_at(&mut f, 120, TAB, true).events.is_empty());
+    }
+
+    #[test]
+    fn double_tap_ignores_keyboard_repeat() {
+        let mut f = double_tab();
+        key_at(&mut f, 0, TAB, true);
+        assert!(key_at(&mut f, 100, TAB, true).events.is_empty()); // touche tenue : répétition
+        assert!(key_at(&mut f, 200, TAB, true).events.is_empty());
+    }
+
+    fn double_ctrl() -> Filter {
+        let mut b = Bindings::defaults();
+        b.set(Action::ToggleDraw, "2×Ctrl".parse().unwrap()).unwrap();
+        Filter::new(b)
+    }
+
+    #[test]
+    fn double_tap_on_modifier_fires_on_second_release() {
+        let mut f = double_ctrl();
+        key_at(&mut f, 0, 0xA2, true);
+        key_at(&mut f, 40, 0xA2, false);
+        assert!(key_at(&mut f, 150, 0xA2, true).events.is_empty());
+        let d = key_at(&mut f, 190, 0xA2, false);
+        assert!(!d.swallow && has(&d, InputEvent::Action(Action::ToggleDraw)));
+    }
+
+    #[test]
+    fn altgr_twice_is_not_a_double_ctrl() {
+        let mut f = double_ctrl();
+        let mut t = 0;
+        for _ in 0..2 {
+            for (vk, down) in [(0xA2, true), (0xA5, true), (0xA5, false), (0xA2, false)] {
+                t += 20;
+                assert!(key_at(&mut f, t, vk, down).events.iter().all(|e| !matches!(e, InputEvent::Action(_))));
+            }
+        }
+    }
+
+    #[test]
+    fn ctrl_used_in_shortcuts_is_not_a_double_ctrl() {
+        let mut f = double_ctrl();
+        let mut t = 0;
+        for _ in 0..2 {
+            for (vk, down) in [(0xA2, true), (0x43, true), (0x43, false), (0xA2, false)] {
+                t += 20;
+                assert!(key_at(&mut f, t, vk, down).events.iter().all(|e| !matches!(e, InputEvent::Action(_))));
+            }
+        }
+    }
+
+    #[test]
+    fn capture_double_mode_records_a_single_key() {
+        let mut f = f();
+        f.set_capturing_double();
+        let d = f.on_key(TAB, true);
+        assert!(d.swallow && has(&d, InputEvent::Captured("2×Tab".parse().unwrap())));
+        f.set_capturing_double();
+        let d = f.on_key(0xA2, true);
+        assert!(has(&d, InputEvent::Captured("2×Ctrl".parse().unwrap())));
+        f.set_capturing_double();
+        assert!(has(&f.on_key(0x1B, true), InputEvent::CaptureCancelled));
+        f.set_capturing_double();
+        assert!(f.on_key(0xA5, true).events.is_empty()); // AltGr n'est pas une touche valable
     }
 }

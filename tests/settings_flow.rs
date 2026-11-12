@@ -101,3 +101,80 @@ fn reset_bindings_restores_defaults_in_the_filter() {
     r.chord(&[LCTRL, LALT, D]);
     assert!(r.app.draw_mode);
 }
+
+const TAB: u32 = 0x09;
+
+/// Saisit un double appui pour `action`, comme le fait le panneau de réglages.
+fn capture_double(r: &mut Rig, action: Action, key: u32) {
+    r.filter.set_capturing_double();
+    r.captured.clear();
+    r.tap(key);
+    if let Some(InputEvent::Captured(shortcut)) = r.captured.first().copied() {
+        r.command(UiCommand::SetBinding(action, shortcut));
+    }
+}
+
+#[test]
+fn double_tap_on_tab_toggles_draw_mode() {
+    let mut r = Rig::new();
+    capture_double(&mut r, Action::ToggleDraw, TAB);
+    assert_eq!(r.app.cfg.bindings.get(Action::ToggleDraw).to_string(), "2×Tab");
+
+    assert!(!r.tap_at(1000, TAB)); // le premier appui atteint l'application
+    assert!(!r.app.draw_mode);
+    assert!(r.tap_at(1200, TAB)); // le second est intercepté
+    assert!(r.app.draw_mode);
+
+    // Un Tab isolé ne fait rien ; deux Tab rapprochés ressortent du mode dessin.
+    assert!(!r.tap_at(3000, TAB));
+    assert!(r.app.draw_mode);
+    r.tap_at(5000, TAB);
+    r.tap_at(5150, TAB);
+    assert!(!r.app.draw_mode);
+
+    // L'ancien raccourci multi-touches ne fait plus rien.
+    r.chord(&[LCTRL, LALT, D]);
+    assert!(!r.app.draw_mode);
+}
+
+#[test]
+fn double_tap_on_ctrl_toggles_and_altgr_does_not() {
+    let mut r = Rig::new();
+    capture_double(&mut r, Action::ToggleDraw, LCTRL);
+    assert_eq!(r.app.cfg.bindings.get(Action::ToggleDraw).to_string(), "2×Ctrl");
+
+    r.tap_at(1000, LCTRL);
+    r.tap_at(1150, LCTRL);
+    assert!(r.app.draw_mode);
+    r.tap(ESC);
+    assert!(!r.app.draw_mode);
+
+    // AltGr tapé deux fois (Ctrl gauche + Alt droit) ne compte pas.
+    for at in [3000u64, 3150] {
+        r.filter.set_now(at);
+        r.key(LCTRL, true);
+        r.key(RALT, true);
+        r.key(RALT, false);
+        r.key(LCTRL, false);
+    }
+    assert!(!r.app.draw_mode);
+
+    // Ctrl+C deux fois de suite non plus.
+    for at in [5000u64, 5150] {
+        r.filter.set_now(at);
+        r.chord(&[LCTRL, 0x43]);
+    }
+    assert!(!r.app.draw_mode);
+}
+
+#[test]
+fn double_tap_binding_survives_restart() {
+    let mut r = Rig::new();
+    capture_double(&mut r, Action::ToggleDraw, TAB);
+    let json = serde_json::to_string(&r.app.cfg).unwrap();
+    let cfg: ekspointer::config::Config = serde_json::from_str(&json).unwrap();
+    let mut r2 = Rig::with_config(cfg);
+    r2.tap_at(100, TAB);
+    r2.tap_at(250, TAB);
+    assert!(r2.app.draw_mode);
+}

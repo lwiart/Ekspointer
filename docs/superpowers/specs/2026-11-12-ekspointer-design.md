@@ -89,7 +89,7 @@ Fenêtre de 420 × 560 px logiques, rayon 18 px, ouverte depuis la barre ou la z
 
 - **Dessin** : durée avant effacement (2 à 15 s, par pas de 1 s), épaisseur par défaut.
 - **Pointeur** : taille du halo (40 à 120 px), couleur du halo liée ou non à la couleur de dessin.
-- **Raccourcis** : une ligne par action. On clique sur la ligne, on tape la combinaison, elle est enregistrée. Échap annule la saisie. Une combinaison déjà utilisée par une autre action est refusée, avec un message qui nomme l'action en conflit. Un bouton rétablit les raccourcis par défaut.
+- **Raccourcis** : une ligne par action. On clique sur la ligne, on tape la combinaison, elle est enregistrée. Échap annule la saisie. Pour les raccourcis globaux (bascule du dessin, tout effacer, halo), un sélecteur à deux positions choisit le type : « Combinaison » ou « Double appui » ; en double appui, on tape une seule touche et la ligne affiche `2×Touche`. Une combinaison déjà utilisée par une autre action est refusée, avec un message qui nomme l'action en conflit. Un bouton rétablit les raccourcis par défaut.
 - **Général** : lancer au démarrage de Windows, masquer la barre d'outils du partage d'écran.
 
 Chaque changement est appliqué et enregistré immédiatement, sans bouton de validation.
@@ -137,6 +137,12 @@ Raccourcis actifs seulement en mode dessin (ils sont interceptés et n'atteignen
 | Quitter le mode dessin | `Échap` |
 
 Tous sont modifiables dans les réglages.
+
+**Double appui** (ajout demandé par l'utilisateur le 13/11/2026). Un raccourci global peut être, au choix, une combinaison de touches ou un double appui rapide sur une même touche, par exemple `2×Tab` ou `2×Ctrl`. Les deux appuis doivent se suivre en moins de 400 ms, sans autre touche entre eux.
+
+- Touche ordinaire (`2×Tab`) : le premier appui atteint l'application en cours, car rien ne permet encore de savoir qu'un second suivra. Le second est intercepté et déclenche l'action.
+- Touche de modification (`2×Ctrl`, `2×Maj`, `2×Alt`, `2×Win`) : rien n'atteint l'application, l'action se déclenche au second relâchement. C'est le choix le plus discret.
+- Une touche de modification utilisée dans un raccourci (`Ctrl+C` deux fois) ou AltGr ne comptent pas comme un double appui.
 
 Sur un clavier français, la touche AltGr est vue par Windows comme `Ctrl+Alt`. Ekspointer ne compte donc que les touches Ctrl et Alt **de gauche** : AltGr ne déclenche jamais un raccourci, et la saisie de `@`, `#` ou `{` n'est pas perturbée.
 

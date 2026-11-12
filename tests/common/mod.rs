@@ -63,6 +63,15 @@ impl Rig {
         d.swallow
     }
 
+    /// Appui bref d'une touche à l'instant `at` (millisecondes). Renvoie vrai si l'appui est intercepté.
+    pub fn tap_at(&mut self, at: u64, vk: u32) -> bool {
+        self.filter.set_now(at);
+        let swallowed = self.key(vk, true);
+        self.filter.set_now(at + 40);
+        self.key(vk, false);
+        swallowed
+    }
+
     /// Appui puis relâchement d'une touche. Renvoie vrai si l'appui est intercepté.
     pub fn tap(&mut self, vk: u32) -> bool {
         let swallowed = self.key(vk, true);

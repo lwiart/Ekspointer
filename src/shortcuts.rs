@@ -26,12 +26,14 @@ impl Mods {
 pub struct Shortcut {
     pub mods: Mods,
     pub key: Option<u32>,
+    /// Double appui rapide sur `key`, sans touche de modification (« 2×Tab », « 2×Ctrl »).
+    pub double: bool,
 }
 
 impl Shortcut {
     /// Forme canonique : chiffres du pavé numérique ramenés à la rangée du haut.
     pub fn normalized(self) -> Shortcut {
-        Shortcut { mods: self.mods, key: self.key.map(normalize_vk) }
+        Shortcut { mods: self.mods, key: self.key.map(normalize_vk), double: self.double }
     }
 }
 
@@ -41,6 +43,28 @@ pub fn normalize_vk(vk: u32) -> u32 {
         vk - 0x30
     } else {
         vk
+    }
+}
+
+/// Délai maximal entre les deux appuis d'un double appui, en millisecondes.
+pub const DOUBLE_TAP_MS: u64 = 400;
+
+/// Touches de modification utilisables en double appui : nom et code.
+const DOUBLE_MODS: [(&str, u32); 4] = [("Ctrl", 0xA2), ("Alt", 0xA4), ("Maj", 0xA0), ("Win", 0x5B)];
+
+/// Vrai pour une touche de modification utilisable en double appui.
+pub fn is_double_modifier(vk: u32) -> bool {
+    DOUBLE_MODS.iter().any(|(_, v)| *v == vk)
+}
+
+/// Code canonique d'une touche pour le double appui, ou `None` si elle n'y est pas
+/// utilisable : Ctrl droit et Alt droit (AltGr) ne comptent jamais.
+pub fn double_tap_vk(vk: u32) -> Option<u32> {
+    match vk {
+        0xA1 => Some(0xA0),
+        0x5C => Some(0x5B),
+        0xA3 | 0xA5 | 0x10 | 0x11 | 0x12 => None,
+        _ => Some(normalize_vk(vk)),
     }
 }
 
@@ -91,6 +115,16 @@ fn key_from_name(name: &str) -> Option<u32> {
 
 impl fmt::Display for Shortcut {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.double {
+            let vk = self.key.unwrap_or(0);
+            let name = DOUBLE_MODS
+                .iter()
+                .find(|(_, v)| *v == vk)
+                .map(|(n, _)| n.to_string())
+                .or_else(|| key_name(vk))
+                .unwrap_or_else(|| format!("Touche{vk}"));
+            return write!(f, "2×{name}");
+        }
         let mut parts: Vec<String> = Vec::new();
         if self.mods.ctrl {
             parts.push("Ctrl".into());
@@ -115,6 +149,24 @@ impl FromStr for Shortcut {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Shortcut, String> {
+        let trimmed = s.trim();
+        if let Some(rest) =
+            trimmed.strip_prefix("2×").or_else(|| trimmed.strip_prefix("2x")).or_else(|| trimmed.strip_prefix("2X"))
+        {
+            let name = rest.trim();
+            let lower = name.to_lowercase();
+            let alias = match lower.as_str() {
+                "shift" => "maj",
+                other => other,
+            };
+            let key = DOUBLE_MODS
+                .iter()
+                .find(|(n, _)| n.to_lowercase() == alias)
+                .map(|(_, v)| *v)
+                .or_else(|| if name.contains('+') { None } else { key_from_name(name) })
+                .ok_or_else(|| format!("double appui invalide : « {s} »"))?;
+            return Ok(Shortcut { mods: Mods::default(), key: Some(key), double: true });
+        }
         let mut mods = Mods::default();
         let mut key = None;
         for part in s.split('+').map(str::trim) {
@@ -135,7 +187,7 @@ impl FromStr for Shortcut {
         if key.is_none() && mods.is_empty() {
             return Err("raccourci vide".into());
         }
-        Ok(Shortcut { mods, key })
+        Ok(Shortcut { mods, key, double: false })
     }
 }
 
@@ -318,6 +370,14 @@ impl Bindings {
             .map(|(a, _)| *a)
     }
 
+    /// Action déclenchée par un double appui sur la touche `vk` (code canonique).
+    pub fn double_action_for(&self, vk: u32, draw_mode: bool) -> Option<Action> {
+        self.0
+            .iter()
+            .find(|(a, s)| s.double && s.key == Some(vk) && **a != Action::HoldDraw && (a.is_global() || draw_mode))
+            .map(|(a, _)| *a)
+    }
+
     pub fn all(&self) -> Vec<(Action, Shortcut)> {
         Action::all().into_iter().map(|a| (a, self.get(a))).collect()
     }
@@ -422,7 +482,7 @@ mod tests {
     #[test]
     fn numpad_and_top_row_digits_conflict() {
         let mut b = Bindings::defaults();
-        let numpad1 = Shortcut { mods: Mods::default(), key: Some(0x61) };
+        let numpad1 = Shortcut { mods: Mods::default(), key: Some(0x61), double: false };
         assert_eq!(b.set(Action::ToolRect, numpad1), Err(Action::Color(0)));
     }
 
@@ -483,6 +543,50 @@ mod tests {
         assert_eq!(json["ExitDraw"], "Échap");
         let back: Bindings = serde_json::from_value(json).unwrap();
         assert_eq!(back, Bindings::defaults());
+    }
+
+    #[test]
+    fn double_tap_parse_display_roundtrip() {
+        for s in ["2×Tab", "2×Ctrl", "2×Maj", "2×Alt", "2×F", "2×Échap"] {
+            assert_eq!(sc(s).to_string(), s);
+            assert!(sc(s).double);
+        }
+        assert_eq!(sc("2xtab"), sc("2×Tab"));
+        assert!(!sc("Tab").double);
+        assert_ne!(sc("Tab"), sc("2×Tab"));
+    }
+
+    #[test]
+    fn double_tap_rejects_combinations() {
+        assert!("2×Ctrl+D".parse::<Shortcut>().is_err());
+        assert!("2×".parse::<Shortcut>().is_err());
+        assert!("Ctrl+2×D".parse::<Shortcut>().is_err());
+    }
+
+    #[test]
+    fn double_tap_bindings() {
+        let mut b = Bindings::defaults();
+        assert!(b.set(Action::ToggleDraw, sc("2×Tab")).is_ok());
+        assert_eq!(b.set(Action::ClearAll, sc("2×Tab")), Err(Action::ToggleDraw));
+        assert_eq!(b.double_action_for(0x09, false), Some(Action::ToggleDraw));
+        assert_eq!(b.double_action_for(0x41, false), None);
+        assert_eq!(b.action_for(sc("Tab"), true), None); // un seul appui ne déclenche rien
+        assert!(b.set(Action::ToolRect, sc("2×R")).is_ok());
+        assert_eq!(b.double_action_for(0x52, false), None); // action propre au mode dessin
+        assert_eq!(b.double_action_for(0x52, true), Some(Action::ToolRect));
+        let json = serde_json::to_string(&b).unwrap();
+        let back: Bindings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.get(Action::ToggleDraw).to_string(), "2×Tab");
+    }
+
+    #[test]
+    fn double_tap_key_normalization() {
+        assert_eq!(double_tap_vk(0xA1), Some(0xA0)); // Maj droite -> Maj
+        assert_eq!(double_tap_vk(0x5C), Some(0x5B)); // Win droite -> Win
+        assert_eq!(double_tap_vk(0xA2), Some(0xA2)); // Ctrl gauche
+        assert_eq!(double_tap_vk(0xA3), None); // Ctrl droit : ne compte jamais
+        assert_eq!(double_tap_vk(0xA5), None); // AltGr : ne compte jamais
+        assert_eq!(double_tap_vk(0x61), Some(0x31)); // pavé numérique
     }
 
     #[test]
