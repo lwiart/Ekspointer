@@ -1,83 +1,124 @@
 # Ekspointer
 
-Ekspointer met le pointeur de souris en évidence et permet de tracer des formes par-dessus n'importe quelle application Windows. Les formes s'effacent seules après quelques secondes. Il est pensé pour les formations en visio (Google Meet ou autre, en partage d'écran entier) et en présentiel.
+<img src="assets/logo-preview.png" alt="" width="44" align="left">
 
-![Logo Ekspointer](assets/logo-preview.png)
+Ekspointer highlights your mouse pointer and lets you draw arrows, boxes and other shapes on top of any Windows application. The shapes fade away on their own after a moment. It is made for teaching and presenting, on a video call or in a room.
 
-- Six outils : flèche, rectangle, ellipse, trait libre, surligneur, numéros d'étapes.
-- Trois effets de pointeur : halo coloré, onde au clic, traînée laser.
-- Dix couleurs (jaune par défaut), trois épaisseurs, effacement automatique réglable de 1 à 15 secondes (1 seconde par défaut), bouton pour garder les tracés à l'écran.
-- Interface en français ou en anglais, avec une page d'aide intégrée.
-- Dessin sur tous les écrans branchés.
-- Un seul exécutable de moins de 1 Mo, écrit en Rust, sans dépendance à installer.
+<br clear="left">
+
+**[Download the latest version](https://github.com/lwiart/Ekspointer/releases/latest)** (installer or portable executable, Windows 10 and 11)
+
+![Ekspointer drawing over the screen: arrows, rectangles, ellipses, freehand strokes, highlighter and numbered steps in ten colors](docs/screenshots/drawing.png)
+
+## How it works
+
+Ekspointer shows a small floating toolbar. Everything you draw appears above your other windows and disappears after one second (you can set this from 1 to 15 seconds).
+
+![The Ekspointer toolbar](docs/screenshots/toolbar.png)
+
+There are two ways to draw.
+
+- **Hold a key.** Hold the left `Ctrl` key and drag the mouse: it draws with the current tool. Release the key and the mouse works normally again. This is the quickest way to point at something while you keep working.
+- **Switch to drawing mode.** Click a tool in the toolbar, or press `Ctrl+Alt+D`. The mouse now draws until you press `Esc` or click the Cursor tool. The mouse wheel still scrolls the page underneath.
+
+While you draw, hold `Shift` to snap an arrow to 15° steps, or to get a square, a circle or a straight highlighter line.
+
+### Tools
+
+| Tool | Shortcut in drawing mode |
+|---|---|
+| Arrow | `A` |
+| Rectangle | `R` |
+| Ellipse | `E` |
+| Freehand | `F` |
+| Highlighter | `H` |
+| Numbers (numbered steps, one per click) | `N` |
+| Colors 1 to 10 | `1` to `9`, then `0` |
+| Undo last shape | `Ctrl+Z` |
+
+These are the English shortcuts. With the interface in French, tools use the first letter of their French name (`F`, `R`, `C`, `D`, `S`, `N`).
+
+![The ten drawing colors](docs/screenshots/colors.png)
+
+### Pointer effects
+
+Three effects make the pointer easier to follow. Each one has a button in the toolbar and a shortcut.
+
+| Effect | What it does | Shortcut |
+|---|---|---|
+| Halo | A soft colored disc follows the pointer | `Ctrl+Alt+H` |
+| Click ripple | A ring expands at every click | `Ctrl+Alt+R` |
+| Laser trail | The pointer leaves a short glowing trail | `Ctrl+Alt+T` |
+
+### Other toolbar buttons
+
+| Button | What it does | Shortcut |
+|---|---|---|
+| Keep drawings on screen | Shapes stay until you clear them | `Ctrl+Alt+K` |
+| Clear all | Removes every shape | `Ctrl+Alt+E` |
+| Settings | Opens the settings panel | `Ctrl+Alt+S` |
+| Help | Opens the built-in help page | `Ctrl+Alt+F1` |
+| Cross | Quits Ekspointer | |
+
+Drag the toolbar by its logo or by any gap between buttons. Double-click the logo to collapse it.
+
+## Settings and help
+
+The settings panel starts with the language (French or English), starting with Windows, and hiding the toolbar from screen sharing. Then come drawing, pointer and shortcut settings. The Help tab lists every button with its icon and current shortcut.
+
+<img src="docs/screenshots/settings.png" alt="The settings panel" width="380"> <img src="docs/screenshots/help.png" alt="The help page" width="380">
+
+Every shortcut can be changed. A global shortcut can be a key combination or a quick **double tap** on one key, such as `2×Ctrl` or `2×Tab`. The key you hold to draw can be one or more of Ctrl, Alt, Shift and Win, or a single function key (F1 to F12).
+
+Things to know about shortcuts:
+
+- While you hold `Ctrl` to draw, `Ctrl+click` draws instead of reaching the application. `Ctrl+C`, `Ctrl+wheel` and other shortcuts are not affected. Choose a function key if this gets in your way.
+- Global shortcuts work in every application. If one clashes with an application you use, change it in the settings.
+- Only the left Ctrl and Alt keys count, so AltGr never triggers a shortcut.
+- With a regular key such as Tab, the first tap of a double tap still reaches the current application.
+
+## Screen sharing
+
+Your audience sees the shapes and pointer effects when you share your **entire screen**. If you share a single window or browser tab, the video call tool does not transmit them.
+
+You can hide the toolbar from screen sharing in the settings, so that only the drawings are shown. This needs Windows 10 version 2004 or later.
 
 ## Installation
 
-Lancez `Ekspointer-Setup-x.y.z.exe`. L'installation se fait pour votre compte, sans droits administrateur, dans `%LOCALAPPDATA%\Programs\Ekspointer`. Les réglages sont enregistrés dans le même dossier (`config.json`).
+Download the files from the [latest release](https://github.com/lwiart/Ekspointer/releases/latest), under "Assets". Older versions are on the [Releases page](https://github.com/lwiart/Ekspointer/releases).
 
-L'installateur et l'exécutable ne sont pas signés : au premier lancement, Windows SmartScreen affiche un avertissement. Cliquez sur « Informations complémentaires » puis « Exécuter quand même ».
+- `Ekspointer-Setup-x.y.z.exe` installs Ekspointer for your user account, without administrator rights, in `%LOCALAPPDATA%\Programs\Ekspointer`. Settings are saved in the same folder (`config.json`). Running a newer installer updates the application and keeps your settings.
+- `Ekspointer-x.y.z-portable.exe` runs without installation and saves its settings next to itself.
 
-La version portable (`Ekspointer-x.y.z-portable.exe`) fonctionne sans installation : elle enregistre ses réglages à côté d'elle.
+The files are not signed, so Windows SmartScreen shows a warning the first time. Click "More info", then "Run anyway".
 
-## Utilisation
+Ekspointer runs on Windows 10 and Windows 11, 64-bit. It is a single executable of less than 1 MB, written in Rust, with nothing else to install.
 
-Une barre d'outils flottante apparaît en haut de l'écran. Glissez-la par son logo ou par n'importe quel espace entre les boutons (elle rétrécit le temps du déplacement) ; double-cliquez sur le logo pour la replier. La croix, au bout de la barre, ferme Ekspointer (le menu de l'icône de la zone de notification propose aussi « Quitter »).
+To quit, click the cross at the end of the toolbar, or right-click the Ekspointer icon in the notification area and choose Quit.
 
-Il y a deux façons de dessiner :
+## Building from source
 
-- **Mode dessin** : cliquez sur un outil, ou tapez `Ctrl+Alt+D`. La souris trace. `Échap` rend la main aux applications.
-- **Touche maintenue** : tenez `Ctrl` (à gauche) et glissez la souris. Tout redevient normal au relâchement. La touche se choisit dans les réglages : une ou plusieurs touches parmi Ctrl, Alt, Maj et Win, ou une touche de fonction (F1 à F12).
-
-En mode dessin, la molette continue de faire défiler la page sous les tracés.
-
-| Action | Raccourci par défaut |
-|---|---|
-| Activer ou quitter le dessin | `Ctrl+Alt+D` |
-| Dessiner en maintenant | `Ctrl` |
-| Tout effacer | `Ctrl+Alt+E` |
-| Afficher le halo | `Ctrl+Alt+H` |
-| Flèche, Rectangle, Ellipse, Trait libre, Surligneur, Numéros | `F`, `R`, `C`, `D`, `S`, `N` (en mode dessin) |
-| Couleurs 1 à 10 | `1` à `9`, puis `0` (en mode dessin) |
-| Annuler la dernière forme | `Ctrl+Z` (en mode dessin) |
-| Contraindre (angle de 15°, carré, cercle, ligne droite) | `Maj` pendant le tracé |
-
-Tous les raccourcis se changent dans les réglages. Les raccourcis globaux peuvent être une combinaison de touches ou un **double appui** rapide sur une même touche, par exemple `2×Ctrl` ou `2×Tab`. Avec une touche ordinaire comme Tab, le premier appui atteint l'application en cours ; avec Ctrl ou Maj, le double appui est sans effet dans l'application. Un raccourci global doit comporter Ctrl, Alt ou Win (ou être une touche de fonction), pour ne jamais gêner la frappe.
-
-Sur un clavier français, AltGr n'est jamais pris pour un raccourci : seules les touches Ctrl et Alt de gauche comptent. Pendant que `Ctrl` est tenu, `Ctrl+C`, `Ctrl+molette` et les autres raccourcis fonctionnent ; seul `Ctrl+clic` est remplacé par le dessin.
-
-## Réglages et aide
-
-Le dernier bouton de la barre ouvre un panneau à deux onglets. « Réglages » commence par la langue (français ou anglais), le lancement au démarrage de Windows et le masquage de la barre au partage d'écran, puis le dessin, le pointeur et les raccourcis. « Aide » résume le mode d'emploi et les raccourcis en cours. Le panneau se déplace en le glissant par son en-tête.
-
-## Partage d'écran
-
-Les formes et les effets sont visibles par vos interlocuteurs quand vous partagez **l'écran entier**. Si vous ne partagez qu'une fenêtre ou un onglet, l'outil de visio ne les transmet pas.
-
-Par défaut, la barre d'outils est visible dans le partage d'écran. L'option « Masquer la barre du partage d'écran » des réglages ne transmet que les tracés ; elle demande Windows 10 version 2004 ou plus récent.
-
-## Compilation
-
-Prérequis : [Rust](https://rustup.rs/), les Build Tools Visual Studio avec les outils C++, et [Inno Setup 6](https://jrsoftware.org/isinfo.php) pour l'installateur.
+You need [Rust](https://rustup.rs/), the Visual Studio Build Tools with the C++ tools, and [Inno Setup 6](https://jrsoftware.org/isinfo.php) for the installer.
 
 ```powershell
-scripts\cargo.cmd test                                            # tests unitaires et d'intégration
-scripts\cargo.cmd test --test process -- --ignored --test-threads=1   # tests du vrai exécutable
-powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1    # tout, puis dist\
+scripts\cargo.cmd test                                                # unit and integration tests
+scripts\cargo.cmd test --test process -- --ignored --test-threads=1   # tests that run the real executable
+powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1    # everything, output in dist\
 ```
 
-`scripts\cargo.cmd` lance `cargo` dans l'environnement de compilation de Visual Studio.
+`scripts\cargo.cmd` runs `cargo` inside the Visual Studio build environment. The tests that run the real executable open windows briefly, move the pointer for a second and send a few keystrokes.
 
-L'icône et les images de l'installateur sont générées depuis `assets/logo.svg` par `scripts\cargo.cmd run -p icon-gen`.
+The icon and the installer images are generated from `assets/logo.svg` with `scripts\cargo.cmd run -p icon-gen`.
 
-## Organisation du code
+## Code layout
 
-- `src/` (bibliothèque) : la logique, sans dépendance à Windows et couverte par les tests. Formes et leur cycle de vie (`shapes`), effets de pointeur (`pointer`), raccourcis (`shortcuts`), réglages (`config`), filtre d'entrées (`input_filter`), état de l'application (`app`), dispositions de l'interface (`ui`).
-- `src/win/` (exécutable) : la couche Windows. Fenêtres transparentes par écran (`overlay`), rendu Direct2D (`gfx`, `render`), écoute clavier et souris (`input`), barre d'outils et réglages (`panel`, `ui`, `settings_view`, `icons`), zone de notification (`tray`).
-- `tests/` : tests d'intégration.
-- `docs/superpowers/` : spec de design et plan d'implémentation.
+- `src/` (library): the logic, with no dependency on Windows, covered by unit tests. Shapes and their life cycle (`shapes`), pointer effects (`pointer`), shortcuts (`shortcuts`), settings (`config`), input filtering (`input_filter`), application state (`app`), translations (`i18n`), interface layouts (`ui`).
+- `src/win/` (executable): the Windows layer. One transparent window per screen (`overlay`), Direct2D rendering (`gfx`, `render`), keyboard and mouse hooks (`input`), toolbar and settings (`panel`, `ui`, `settings_view`, `icons`), notification area (`tray`).
+- `tests/`: integration tests.
+- `docs/superpowers/`: design spec and implementation plan (in French).
 
-Les polices Instrument Sans et Noto Sans Mono sont embarquées sous licence OFL (`assets/fonts/`).
+The Instrument Sans and Noto Sans Mono fonts are embedded under the OFL license (`assets/fonts/`).
 
-## Crédits
+## Credits
 
-Ekspointer est conçu par Laurent Wiart, [Eksplodo](https://eksplodo.fr/) : formation et conseil en automatisation et IA.
+Ekspointer is created by Laurent Wiart, [Eksplodo](https://eksplodo.fr/): training and consulting in automation and AI.
