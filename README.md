@@ -68,7 +68,7 @@ The settings panel starts with the language (French or English), starting with W
 
 <img src="docs/screenshots/settings.png" alt="The settings panel" width="380"> <img src="docs/screenshots/help.png" alt="The help page" width="380">
 
-Every shortcut can be changed. A global shortcut can be a key combination or a quick **double tap** on one key, such as `2×Ctrl` or `2×Tab`. The key you hold to draw can be one or more of Ctrl, Alt, Shift and Win, or a single function key (F1 to F12).
+Every shortcut can be changed. A global shortcut can be a key combination or a quick **double tap** on one key, such as `2×Ctrl` or `2×Tab`. A double tap cannot be set on a letter, a digit or another key that types a character, because it would fire while you type. The key you hold to draw can be one or more of Ctrl, Alt, Shift and Win, or a single function key (F1 to F12).
 
 Things to know about shortcuts:
 

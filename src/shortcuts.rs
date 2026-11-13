@@ -479,6 +479,8 @@ pub enum Reason {
     NeedsKey,
     /// Un raccourci global ne doit pas être une touche de frappe ordinaire.
     NeedsModifier,
+    /// Un double appui global ne se fait pas sur une touche qui écrit un caractère.
+    DoubleNotTyping,
 }
 
 impl Reason {
@@ -491,8 +493,16 @@ impl Reason {
             (Reason::NeedsKey, Lang::En) => "Add a key to this shortcut.",
             (Reason::NeedsModifier, Lang::Fr) => "Ajoutez Ctrl, Alt ou Win, ou choisissez une touche de fonction.",
             (Reason::NeedsModifier, Lang::En) => "Add Ctrl, Alt or Win, or pick a function key.",
+            (Reason::DoubleNotTyping, Lang::Fr) => "Double appui : choisissez Ctrl, Maj, Tab ou une touche F1 à F12.",
+            (Reason::DoubleNotTyping, Lang::En) => "Double tap: pick Ctrl, Shift, Tab or an F1 to F12 key.",
         }
     }
+}
+
+/// Vrai pour une touche qui écrit un caractère : lettre, chiffre, pavé numérique, espace, signe.
+/// Tab n'en fait pas partie : on ne le double pas en écrivant.
+pub fn is_typing_key(vk: u32) -> bool {
+    matches!(vk, 0x20 | 0x30..=0x39 | 0x41..=0x5A | 0x60..=0x6F | 0xBA..=0xC0 | 0xDB..=0xDF | 0xE2)
 }
 
 /// Vérifie qu'un raccourci convient à une action, indépendamment des autres raccourcis.
@@ -507,7 +517,9 @@ pub fn validate(action: Action, s: Shortcut) -> Result<(), Reason> {
         return Err(Reason::NeedsKey);
     };
     if s.double {
-        return Ok(());
+        // Un double appui actif partout ne doit pas être une touche qui écrit un caractère :
+        // deux lettres identiques tapées vite (« elle ») le déclencheraient en pleine frappe.
+        return if action.is_global() && is_typing_key(key) { Err(Reason::DoubleNotTyping) } else { Ok(()) };
     }
     // Un raccourci actif partout ne doit pas être une touche de frappe ordinaire : il serait
     // intercepté dans toutes les applications.
@@ -780,6 +792,38 @@ mod tests {
     }
 
     #[test]
+    fn global_double_tap_refuses_typing_keys() {
+        // Lettre, chiffre, pavé numérique, espace, signe : un double appui global serait
+        // intercepté en pleine frappe dans toutes les applications.
+        for s in ["2×A", "2×5", "2×Espace"] {
+            let mut b = Bindings::defaults();
+            assert_eq!(b.set(Action::ToggleDraw, sc(s)), Err(BindError::Invalid(Reason::DoubleNotTyping)), "{s}");
+        }
+        for vk in [0x61, 0x6B, 0xBA, 0xE2] {
+            let s = Shortcut { mods: Mods::default(), key: Some(vk), double: true };
+            assert_eq!(validate(Action::ClearAll, s), Err(Reason::DoubleNotTyping), "{vk:#x}");
+        }
+        // Les touches qui n'écrivent rien restent permises, ainsi que Tab.
+        for s in ["2×Tab", "2×Ctrl", "2×Maj", "2×F8", "2×Inser"] {
+            let mut b = Bindings::defaults();
+            assert!(b.set(Action::ToggleDraw, sc(s)).is_ok(), "{s}");
+        }
+        // En mode dessin le clavier est déjà réservé au dessin : une lettre y est permise.
+        assert!(validate(Action::ToolRect, sc("2×R")).is_ok());
+    }
+
+    #[test]
+    fn config_file_cannot_bind_a_global_double_tap_on_a_typing_key() {
+        let b: Bindings =
+            serde_json::from_str(r#"{"ToggleDraw":"2×E","ClearAll":"2×1","TogglePin":"2×Tab"}"#).unwrap();
+        assert_eq!(b.get(Action::ToggleDraw), Action::ToggleDraw.default_shortcut());
+        assert_eq!(b.get(Action::ClearAll), Action::ClearAll.default_shortcut());
+        assert_eq!(b.get(Action::TogglePin).to_string(), "2×Tab");
+        assert_eq!(b.double_action_for(0x45, false), None);
+        assert_eq!(b.double_action_for(0x31, false), None);
+    }
+
+    #[test]
     fn double_tap_bindings() {
         let mut b = Bindings::defaults();
         assert!(b.set(Action::ToggleDraw, sc("2×Tab")).is_ok());
@@ -924,7 +968,7 @@ mod tests {
             assert_eq!(a.label_in(Lang::Fr), a.label());
             assert!(!a.label_in(Lang::En).is_empty());
         }
-        for reason in [Reason::HoldModifiersOnly, Reason::NeedsKey, Reason::NeedsModifier] {
+        for reason in [Reason::HoldModifiersOnly, Reason::NeedsKey, Reason::NeedsModifier, Reason::DoubleNotTyping] {
             assert_ne!(reason.message(Lang::Fr), reason.message(Lang::En));
         }
         let mut b = Bindings::defaults();
