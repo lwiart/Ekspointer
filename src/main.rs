@@ -28,8 +28,28 @@ use windows::Win32::System::ProcessStatus::K32EmptyWorkingSet;
 use windows::Win32::System::Threading::{CreateMutexW, GetCurrentProcess};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-const MAIN_CLASS: PCWSTR = w!("EkspointerMain");
-const MUTEX_NAME: PCWSTR = w!("Ekspointer.Instance");
+/// Nom, pour Windows, d'un objet propre à cette instance. La variable d'environnement
+/// `EKSPOINTER_INSTANCE` y ajoute un suffixe : les tests s'en servent pour lancer des instances
+/// qui ne voient ni ne ferment l'Ekspointer de l'utilisateur.
+fn instance_name(base: &str) -> Vec<u16> {
+    let name = match std::env::var("EKSPOINTER_INSTANCE") {
+        Ok(suffix) if !suffix.is_empty() => format!("{base}.{suffix}"),
+        _ => base.to_string(),
+    };
+    name.encode_utf16().chain(Some(0)).collect()
+}
+
+/// Classe de la fenêtre principale (cachée), par laquelle une autre instance nous joint.
+fn main_class() -> PCWSTR {
+    static NAME: std::sync::OnceLock<Vec<u16>> = std::sync::OnceLock::new();
+    PCWSTR(NAME.get_or_init(|| instance_name("EkspointerMain")).as_ptr())
+}
+
+/// Verrou d'instance unique.
+fn mutex_name() -> PCWSTR {
+    static NAME: std::sync::OnceLock<Vec<u16>> = std::sync::OnceLock::new();
+    PCWSTR(NAME.get_or_init(|| instance_name("Ekspointer.Instance")).as_ptr())
+}
 
 /// Minuteur armé sur l'instant où la prochaine forme commencera son fondu.
 const TIMER_DEADLINE: usize = 1;
@@ -137,13 +157,13 @@ fn create_main_window() -> Result<HWND> {
         let class = WNDCLASSW {
             lpfnWndProc: Some(main_proc),
             hInstance: instance.into(),
-            lpszClassName: MAIN_CLASS,
+            lpszClassName: main_class(),
             ..Default::default()
         };
         RegisterClassW(&class);
         CreateWindowExW(
             WINDOW_EX_STYLE(0),
-            MAIN_CLASS,
+            main_class(),
             w!("Ekspointer"),
             WS_POPUP,
             0,
@@ -773,10 +793,10 @@ fn main() {
     let args = parse_args();
     unsafe {
         // Instance unique : le mutex vit jusqu'à la fin du processus.
-        let mutex = CreateMutexW(None, true, MUTEX_NAME);
+        let mutex = CreateMutexW(None, true, mutex_name());
         let already_running = GetLastError() == ERROR_ALREADY_EXISTS;
         if already_running || args.quit {
-            if let Ok(existing) = FindWindowW(MAIN_CLASS, None) {
+            if let Ok(existing) = FindWindowW(main_class(), None) {
                 let message = if args.quit { WM_CLOSE } else { win::WM_APP_SHOW };
                 let _ = PostMessageW(Some(existing), message, WPARAM(0), LPARAM(0));
             }

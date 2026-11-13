@@ -3,7 +3,7 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1
 #
 # Prérequis : Rust (rustup), Build Tools Visual Studio avec les outils C++, Inno Setup 6.
-# Fermer Ekspointer avant de lancer ce script : les tests de l'exécutable en lancent leur propre instance.
+# Les tests de l'exécutable lancent leurs propres instances, isolées de tout Ekspointer déjà ouvert.
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -14,10 +14,6 @@ function Invoke-Step([string]$Title, [scriptblock]$Action) {
     Write-Host "== $Title" -ForegroundColor Cyan
     & $Action
     if ($LASTEXITCODE -ne 0) { throw "Échec : $Title" }
-}
-
-if (Get-Process ekspointer -ErrorAction SilentlyContinue) {
-    throw "Ekspointer est en cours d'exécution. Fermez-le (icône de la zone de notification, Quitter) puis relancez ce script."
 }
 
 $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value

@@ -1,8 +1,9 @@
 //! Tests d'intégration de l'exécutable : ils lancent le vrai `ekspointer.exe`, copié dans un
 //! dossier temporaire pour ne pas toucher aux réglages du poste.
 //!
-//! Ils ouvrent de vraies fenêtres et partagent le verrou d'instance unique : ils sont donc
-//! ignorés par défaut et se lancent un à la fois, sans autre Ekspointer en cours :
+//! Ils ouvrent de vraies fenêtres : ils sont donc ignorés par défaut et se lancent un à la
+//! fois. Chaque test isole ses instances par `EKSPOINTER_INSTANCE`, si bien qu'un Ekspointer
+//! déjà lancé sur le poste n'est ni vu ni fermé :
 //!
 //! ```text
 //! cargo test --test process -- --ignored --test-threads=1
@@ -17,24 +18,13 @@ use std::time::{Duration, Instant};
 struct Sandbox {
     dir: PathBuf,
     exe: PathBuf,
+    /// Suffixe d'instance : isole les Ekspointer lancés par ce test de celui de l'utilisateur.
+    instance: String,
     children: Vec<Child>,
-}
-
-/// Vrai si un Ekspointer tourne déjà sur le poste (sa fenêtre principale existe).
-fn another_instance_is_running() -> bool {
-    use windows::core::w;
-    use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
-    unsafe { FindWindowW(w!("EkspointerMain"), None).is_ok_and(|h| !h.0.is_null()) }
 }
 
 impl Sandbox {
     fn new() -> Sandbox {
-        // Sans ce garde-fou, le test se terminerait aussitôt (second lancement) et son --quit
-        // fermerait l'Ekspointer de l'utilisateur.
-        assert!(
-            !another_instance_is_running(),
-            "Ekspointer est déjà lancé sur ce poste : fermez-le avant de lancer ces tests"
-        );
         static N: AtomicU32 = AtomicU32::new(0);
         let dir = std::env::temp_dir().join(format!(
             "ekspointer-proc-{}-{}",
@@ -44,7 +34,15 @@ impl Sandbox {
         std::fs::create_dir_all(&dir).unwrap();
         let exe = dir.join("ekspointer.exe");
         std::fs::copy(env!("CARGO_BIN_EXE_ekspointer"), &exe).unwrap();
-        Sandbox { dir, exe, children: Vec::new() }
+        let instance = dir.file_name().unwrap().to_string_lossy().into_owned();
+        Sandbox { dir, exe, instance, children: Vec::new() }
+    }
+
+    /// Commande qui lance l'exécutable du test, isolé de tout autre Ekspointer du poste.
+    fn command(&self) -> Command {
+        let mut command = Command::new(&self.exe);
+        command.env("EKSPOINTER_INSTANCE", &self.instance);
+        command
     }
 
     fn file(&self, name: &str) -> PathBuf {
@@ -53,7 +51,7 @@ impl Sandbox {
 
     /// Lance une instance et lui laisse le temps de démarrer.
     fn start(&mut self) -> usize {
-        let child = Command::new(&self.exe).arg("--capturable").spawn().unwrap();
+        let child = self.command().arg("--capturable").spawn().unwrap();
         self.children.push(child);
         std::thread::sleep(Duration::from_millis(1500));
         self.children.len() - 1
@@ -61,7 +59,7 @@ impl Sandbox {
 
     /// Lance l'exécutable avec des arguments et attend sa fin, dans la limite donnée.
     fn run(&self, args: &[&str], limit: Duration) -> Option<ExitStatus> {
-        let mut child = Command::new(&self.exe).args(args).spawn().unwrap();
+        let mut child = self.command().args(args).spawn().unwrap();
         wait(&mut child, limit).or_else(|| {
             let _ = child.kill();
             None
@@ -198,7 +196,7 @@ fn quit_without_running_instance_is_a_noop() {
 #[ignore = "lance le vrai exécutable"]
 fn demo_mode_never_writes_settings() {
     let mut s = Sandbox::new();
-    let child = Command::new(&s.exe).args(["--demo", "--capturable"]).spawn().unwrap();
+    let child = s.command().args(["--demo", "--capturable"]).spawn().unwrap();
     s.children.push(child);
     std::thread::sleep(Duration::from_millis(1500));
     s.run(&["--quit"], QUICK);
@@ -251,9 +249,24 @@ fn global_shortcut_goes_through_the_real_keyboard_hook() {
 fn quit_button_of_the_toolbar_closes_the_application() {
     // `--demo-ui=quit` clique sur la croix de la barre, par le même chemin que la souris.
     let mut s = Sandbox::new();
-    let child = Command::new(&s.exe).args(["--demo-ui=quit", "--capturable"]).spawn().unwrap();
+    let child = s.command().args(["--demo-ui=quit", "--capturable"]).spawn().unwrap();
     s.children.push(child);
     let status = s.wait(0, Duration::from_secs(5)).expect("la croix n'a pas fermé l'application");
     assert_eq!(status.code(), Some(0));
     assert!(!s.file("ekspointer.log").exists(), "une erreur a été journalisée");
+}
+
+#[test]
+#[ignore = "lance le vrai exécutable"]
+fn test_instances_are_isolated_from_each_other() {
+    // Deux bacs à sable : chacun a son verrou et sa fenêtre, comme le test et l'Ekspointer
+    // de l'utilisateur. Fermer l'un ne ferme pas l'autre.
+    let (mut a, mut b) = (Sandbox::new(), Sandbox::new());
+    let (first, second) = (a.start(), b.start());
+    assert!(a.alive(first) && b.alive(second), "la seconde instance a été prise pour un second lancement");
+    a.run(&["--quit"], QUICK);
+    assert!(a.wait(first, SHUTDOWN).is_some());
+    assert!(b.alive(second), "--quit a fermé une instance qui n'était pas la sienne");
+    b.run(&["--quit"], QUICK);
+    assert!(b.wait(second, SHUTDOWN).is_some());
 }
