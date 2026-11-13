@@ -123,6 +123,10 @@ pub fn draw(p: &Painter, item: Item, r: RectF, color: Rgba) {
                 g.ring((knob, y), 2.6, color);
             }
         }
+        Item::Help => {
+            g.ring((12.0, 12.0), 8.5, color);
+            p.text("?", Family::Mono, 12.0 * g.k(), 700, Align::Center, r, color);
+        }
         Item::Logo | Item::Color | Item::Separator => {}
     }
 }

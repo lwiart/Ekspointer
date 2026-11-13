@@ -12,7 +12,8 @@ use std::path::PathBuf;
 use std::time::Instant;
 use win::gfx::Gfx;
 use win::overlay::Overlays;
-use ekspointer::ui::settings::conflict_message;
+use ekspointer::i18n::{t, Lang, Text};
+use ekspointer::ui::settings::{conflict_message_in, Tab};
 use ekspointer::ui::toolbar::{self, Item};
 use win::panel::{PanelEvent, PanelId};
 use win::settings_view::{SettingsAction, SettingsView, CONFLICT_MS};
@@ -57,8 +58,10 @@ struct Args {
     /// Demande à l'instance en cours de se fermer.
     quit: bool,
     /// Met l'interface dans un état donné, pour les vérifications visuelles :
-    /// `popover`, `tooltip`, `settings`, `conflict`, `collapsed` ou `drawing`.
+    /// `popover`, `tooltip`, `settings`, `help`, `conflict`, `collapsed` ou `drawing`.
     demo_ui: Option<String>,
+    /// Force la langue de l'interface (`fr` ou `en`), pour les vérifications visuelles.
+    lang: Option<Lang>,
 }
 
 fn parse_args() -> Args {
@@ -71,6 +74,11 @@ fn parse_args() -> Args {
             other => {
                 if let Some(name) = other.strip_prefix("--demo-ui=") {
                     args.demo_ui = Some(name.to_string());
+                }
+                match other {
+                    "--lang=en" => args.lang = Some(Lang::En),
+                    "--lang=fr" => args.lang = Some(Lang::Fr),
+                    _ => {}
                 }
             }
         }
@@ -234,13 +242,18 @@ impl Shell {
     fn toggle_settings(&mut self) {
         if self.settings.visible() {
             self.close_settings();
-            return;
+        } else {
+            self.open_settings(Tab::Settings);
         }
+    }
+
+    /// Ouvre le panneau sur un onglet (réglages ou aide), au centre de l'écran de la barre.
+    fn open_settings(&mut self, tab: Tab) {
         let bar = self.ui.toolbar.rect();
         let center = Pt::new(bar.x + bar.w / 2.0, bar.y + bar.h / 2.0);
         let (monitor, scale) = self.overlays.monitor_at(center).unwrap_or(self.overlays.primary());
         let appear = self.animate.then(|| self.now());
-        if let Err(e) = self.settings.open(&self.gfx, monitor, scale, autostart::is_enabled(), appear) {
+        if let Err(e) = self.settings.open(&self.gfx, monitor, scale, autostart::is_enabled(), tab, appear) {
             log::error(&format!("ouverture des réglages : {e}"));
         }
     }
@@ -280,9 +293,10 @@ impl Shell {
         };
         let effects = self.app.command(UiCommand::SetBinding(action, shortcut), now);
         for e in &effects {
+            let lang = self.app.cfg.language;
             let message = match e {
-                Effect::BindingConflict(other) => conflict_message(shortcut, *other),
-                Effect::BindingRejected(reason) => reason.to_string(),
+                Effect::BindingConflict(other) => conflict_message_in(lang, shortcut, *other),
+                Effect::BindingRejected(reason) => reason.message(lang).to_string(),
                 _ => continue,
             };
             self.settings.show_conflict(action, message, now + CONFLICT_MS);
@@ -301,10 +315,7 @@ impl Shell {
             if !self.save_failed {
                 self.save_failed = true;
                 log::error(&format!("réglages non enregistrés : {e}"));
-                self.tray.notify(
-                    "Ekspointer",
-                    "Les réglages ne peuvent pas être enregistrés dans ce dossier. Ils seront perdus à la fermeture.",
-                );
+                self.tray.notify("Ekspointer", t(self.app.cfg.language, Text::SaveFailed));
             }
         }
     }
@@ -335,6 +346,7 @@ impl Shell {
             match action {
                 UiAction::Command(cmd) => self.command(cmd, now),
                 UiAction::ToggleSettings => self.toggle_settings(),
+                UiAction::OpenHelp => self.open_settings(Tab::Help),
                 UiAction::ArmTooltip => unsafe {
                     SetTimer(Some(self.main), TIMER_TOOLTIP, TIP_DELAY_MS as u32, None);
                 },
@@ -415,17 +427,14 @@ impl Shell {
             Msg::Tray(cmd) => match cmd {
                 TrayCommand::ShowToolbar => self.show_toolbar(true),
                 TrayCommand::OpenMenu => {
-                    if let Some(chosen) = self.tray.menu(self.ui.toolbar_visible()) {
+                    if let Some(chosen) = self.tray.menu(self.ui.toolbar_visible(), self.app.cfg.language) {
                         win::post(Msg::Tray(chosen));
                     }
                 }
                 TrayCommand::Recreate => self.tray.add(),
                 TrayCommand::ToggleToolbar => self.show_toolbar(!self.ui.toolbar_visible()),
-                TrayCommand::Settings => {
-                    if !self.settings.visible() {
-                        self.toggle_settings();
-                    }
-                }
+                TrayCommand::Settings => self.open_settings(Tab::Settings),
+                TrayCommand::Help => self.open_settings(Tab::Help),
                 TrayCommand::Quit => unsafe {
                     let _ = DestroyWindow(self.main);
                 },
@@ -498,7 +507,7 @@ impl Shell {
                 self.settings = settings;
                 input::with_filter(|f| f.set_capturing(false));
                 if settings_open {
-                    self.toggle_settings();
+                    self.open_settings(Tab::Settings);
                 }
             }
             Err(e) => log::error(&format!("recréation des réglages : {e}")),
@@ -527,9 +536,9 @@ fn demo_scene(shell: &mut Shell) {
         app.command(UiCommand::TogglePin, 0);
     }
     let tools = [Tool::Arrow, Tool::Rect, Tool::Ellipse, Tool::Free, Tool::Highlighter, Tool::Number];
-    let (cw, ch) = (170.0 * scale, 110.0 * scale);
-    let (x0, y0) = (rect.x + 120.0 * scale, rect.y + 150.0 * scale);
-    for color in 0..6u8 {
+    let (cw, ch) = (170.0 * scale, 72.0 * scale);
+    let (x0, y0) = (rect.x + 120.0 * scale, rect.y + 110.0 * scale);
+    for color in 0..ekspointer::geom::PALETTE.len() as u8 {
         app.command(UiCommand::SetColor(color), 0);
         app.command(UiCommand::SetWidth(color % 3), 0);
         for (col, tool) in tools.iter().enumerate() {
@@ -551,8 +560,6 @@ fn demo_scene(shell: &mut Shell) {
         }
     }
     app.command(UiCommand::SelectTool(None), 0);
-    // Halo allumé : il suit le vrai curseur, ce qui permet de le vérifier sur une capture.
-    app.command(UiCommand::ToggleHalo, 0);
 }
 
 /// Met l'interface dans un état donné en lui envoyant les mêmes événements que la souris.
@@ -576,6 +583,17 @@ fn demo_ui(shell: &mut Shell, name: &str) {
             click(Item::Pin);
         }
         "collapsed" => shell.command(UiCommand::SetToolbarCollapsed(true), 0),
+        "keytool" => {
+            use ekspointer::shortcuts::Action;
+            win::post(Msg::Input(InputEvent::Action(Action::ToggleDraw)));
+            win::post(Msg::Input(InputEvent::Action(Action::ToolEllipse)));
+        }
+        "help" | "help-end" => {
+            shell.open_settings(Tab::Help);
+            if name == "help-end" {
+                win::post(Msg::Panel(PanelId::Settings, PanelEvent::Wheel(-30.0)));
+            }
+        }
         "settings" | "settings-end" | "conflict" => {
             shell.toggle_settings();
             if name == "settings-end" {
@@ -591,6 +609,14 @@ fn demo_ui(shell: &mut Shell, name: &str) {
         }
         _ => {}
     }
+}
+
+/// Langue de Windows pour l'utilisateur courant.
+fn system_lang() -> Lang {
+    let mut buffer = [0u16; 85];
+    let len = unsafe { windows::Win32::Globalization::GetUserDefaultLocaleName(&mut buffer) };
+    let len = (len.max(1) as usize - 1).min(buffer.len());
+    Lang::from_locale(&String::from_utf16_lossy(&buffer[..len]))
 }
 
 fn fatal(text: &str) -> ! {
@@ -612,6 +638,14 @@ fn run(args: Args) -> Result<()> {
     if let LoadOutcome::Invalid { backup } = &outcome {
         log::error(&format!("réglages illisibles, mis de côté dans {}", backup.display()));
     }
+    // Premier lancement : l'interface prend la langue de Windows (français, sinon anglais).
+    if matches!(outcome, LoadOutcome::Defaults) && !demo {
+        cfg.language = system_lang();
+    }
+    if let Some(forced) = args.lang {
+        cfg.language = forced;
+    }
+    let lang = cfg.language;
     cfg.sanitize();
     TASKBAR_CREATED.store(unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) }, std::sync::atomic::Ordering::Relaxed);
 
@@ -621,7 +655,7 @@ fn run(args: Args) -> Result<()> {
     let filter = Filter::new(app.cfg.bindings.clone());
     let _hooks = match input::install(filter) {
         Ok(h) => h,
-        Err(_) => fatal("Ekspointer n'a pas pu démarrer l'écoute du clavier et de la souris."),
+        Err(_) => fatal(t(lang, Text::HookFailed)),
     };
 
     let animate = animations_enabled();
@@ -629,10 +663,7 @@ fn run(args: Args) -> Result<()> {
     let settings = SettingsView::new(&gfx)?;
     let tray = Tray::new(main)?;
     if matches!(outcome, LoadOutcome::Invalid { .. }) {
-        tray.notify(
-            "Ekspointer",
-            "Le fichier de réglages était illisible. Il a été renommé en config.invalide.json et les réglages par défaut sont utilisés.",
-        );
+        tray.notify("Ekspointer", t(lang, Text::InvalidConfig));
     }
 
     let mut shell = Shell {
@@ -704,6 +735,8 @@ fn run(args: Args) -> Result<()> {
             shell.shapes_dirty = true;
         }
         shell.render(now);
+        // Le rendu peut lancer une animation (pastille de l'outil actif, apparition d'un volet).
+        animating |= shell.ui.animating(now) | shell.settings.panel.appearing(now);
         dirty = false;
         if animating {
             unsafe {
@@ -739,6 +772,6 @@ fn main() {
     }
 
     if let Err(e) = run(args) {
-        fatal(&format!("Ekspointer n'a pas pu démarrer : {e}"));
+        fatal(&format!("{} : {e}", t(system_lang(), Text::StartFailed)));
     }
 }

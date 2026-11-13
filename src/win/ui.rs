@@ -27,6 +27,8 @@ pub const TIP_DELAY_MS: u64 = 500;
 pub enum UiAction {
     Command(UiCommand),
     ToggleSettings,
+    /// Ouvrir la page d'aide.
+    OpenHelp,
     /// Le survol a changé : armer le minuteur de la bulle d'aide.
     ArmTooltip,
 }
@@ -38,13 +40,16 @@ enum Pop {
 }
 
 struct Drag {
-    /// Écart entre le curseur et le coin de la barre au début du glissement.
+    /// Écart entre le curseur et le coin de la barre au début du glissement, à taille normale.
     offset: (i32, i32),
     start: (i32, i32),
     moved: bool,
+    /// Échelle de la barre avant le glissement : elle est réduite de moitié pendant qu'on la déplace.
+    base_scale: f32,
 }
 
-fn cursor() -> (i32, i32) {
+/// Position du curseur dans le bureau virtuel, en pixels physiques.
+pub fn cursor() -> (i32, i32) {
     let mut p = POINT::default();
     unsafe {
         let _ = GetCursorPos(&mut p);
@@ -236,7 +241,8 @@ impl Ui {
         if now.saturating_sub(self.hover_since) + 20 < TIP_DELAY_MS {
             return Ok(());
         }
-        let (Some(text), Some(anchor)) = (toolbar::tooltip(item, &app.cfg.bindings), self.layout.rect(item)) else {
+        let tip = toolbar::tooltip_in(item, &app.cfg.bindings, app.cfg.language);
+        let (Some(text), Some(anchor)) = (tip, self.layout.rect(item)) else {
             return Ok(());
         };
         let mut w = 14.0 + gfx.text_width(&text.0, Family::Body, 13.0, 500) + 14.0;
@@ -297,6 +303,10 @@ impl Ui {
                 self.close_floating();
                 out.push(UiAction::ToggleSettings);
             }
+            Item::Help => {
+                self.close_floating();
+                out.push(UiAction::OpenHelp);
+            }
             Item::Logo | Item::Separator => {}
         }
         Ok(())
@@ -320,12 +330,15 @@ impl Ui {
                     let p = self.toolbar.to_dip(p);
                     if let Some(drag) = &mut self.drag {
                         let c = cursor();
-                        if (c.0 - drag.start.0).abs() + (c.1 - drag.start.1).abs() > 4 {
-                            drag.moved = true;
-                        }
+                        let pos = toolbar::drag_origin(c, drag.offset, toolbar::DRAG_SHRINK);
                         if drag.moved {
-                            let pos = (c.0 - drag.offset.0, c.1 - drag.offset.1);
                             self.toolbar.move_to(pos);
+                        } else if (c.0 - drag.start.0).abs() + (c.1 - drag.start.1).abs() > 4 {
+                            // Le déplacement commence : la barre passe à demi-taille sous le curseur.
+                            drag.moved = true;
+                            let size = (self.layout.w, self.layout.h);
+                            let scale = drag.base_scale * toolbar::DRAG_SHRINK;
+                            self.toolbar.place(gfx, pos, size, theme::BAR_H / 2.0, scale)?;
                         }
                     } else {
                         self.mouse = Some(p);
@@ -344,13 +357,15 @@ impl Ui {
                     self.tip = None;
                     self.tooltip.hide();
                     self.pressed = self.layout.hit(p);
-                    if self.pressed == Some(Item::Logo) {
+                    // Tout ce qui n'est pas un bouton sert de poignée : logo, filets, marges, espaces.
+                    if self.layout.is_handle(p) {
                         let c = cursor();
                         self.close_floating();
                         self.drag = Some(Drag {
                             offset: (c.0 - self.toolbar.pos.0, c.1 - self.toolbar.pos.1),
                             start: c,
                             moved: false,
+                            base_scale: self.toolbar.scale,
                         });
                     }
                 }
@@ -358,14 +373,7 @@ impl Ui {
                     let p = self.toolbar.to_dip(p);
                     let pressed = self.pressed.take();
                     if let Some(drag) = self.drag.take() {
-                        if drag.moved {
-                            let (x, y) = self.toolbar.pos;
-                            out.push(UiAction::Command(UiCommand::SetToolbarPos(x, y)));
-                            // L'écran d'arrivée peut avoir une autre échelle : replacer à la bonne taille.
-                            let center = Pt::new(x as f32 + 28.0, y as f32 + 28.0);
-                            let scale = overlays.monitor_at(center).map(|(_, s)| s).unwrap_or(self.toolbar.scale);
-                            self.toolbar.place(gfx, (x, y), (self.layout.w, self.layout.h), theme::BAR_H / 2.0, scale)?;
-                        }
+                        self.end_drag(gfx, overlays, drag, &mut out)?;
                     } else if let Some(item) = pressed.filter(|i| self.layout.hit(p) == Some(*i)) {
                         self.activate(gfx, app, overlays, item, now, &mut out)?;
                     }
@@ -380,10 +388,7 @@ impl Ui {
                     // La souris a été reprise (autre fenêtre, Alt+Tab) : terminer le glissement là où il est.
                     self.pressed = None;
                     if let Some(drag) = self.drag.take() {
-                        if drag.moved {
-                            let (x, y) = self.toolbar.pos;
-                            out.push(UiAction::Command(UiCommand::SetToolbarPos(x, y)));
-                        }
+                        self.end_drag(gfx, overlays, drag, &mut out)?;
                     }
                 }
             },
@@ -409,6 +414,21 @@ impl Ui {
             PanelId::Tooltip | PanelId::Settings => {}
         }
         Ok(out)
+    }
+
+    /// Fin d'un déplacement : la barre reprend sa taille, le point saisi toujours sous le curseur.
+    fn end_drag(&mut self, gfx: &Gfx, overlays: &Overlays, drag: Drag, out: &mut Vec<UiAction>) -> Result<()> {
+        if !drag.moved {
+            return Ok(());
+        }
+        let (x, y) = toolbar::drag_origin(cursor(), drag.offset, 1.0);
+        // L'écran d'arrivée peut avoir une autre échelle que celui de départ.
+        let center = Pt::new(x as f32 + 28.0, y as f32 + 28.0);
+        let scale = overlays.monitor_at(center).map(|(_, s)| s).unwrap_or(drag.base_scale);
+        self.toolbar.place(gfx, (x, y), (self.layout.w, self.layout.h), theme::BAR_H / 2.0, scale)?;
+        out.push(UiAction::Command(UiCommand::SetToolbarPos(x, y)));
+        self.dirty = true;
+        Ok(())
     }
 
     /// Vrai tant qu'une animation de la barre est en cours.

@@ -1,6 +1,7 @@
 //! Barre d'outils : disposition et libellés. Pur, en pixels logiques.
 
 use crate::geom::{Pt, RectF};
+use crate::i18n::Lang;
 use crate::shapes::Tool;
 use crate::shortcuts::{Action, Bindings};
 use crate::ui::theme::{BAR_H, BTN};
@@ -13,6 +14,15 @@ pub const GAP: f32 = 4.0;
 const SEP_SPACE: f32 = 8.0;
 /// Hauteur d'un filet de séparation.
 const SEP_H: f32 = 24.0;
+
+/// Facteur de réduction de la barre pendant qu'on la déplace.
+pub const DRAG_SHRINK: f32 = 0.5;
+
+/// Coin haut-gauche de la barre pendant un déplacement : le point saisi (`grab`, mesuré à
+/// taille normale depuis ce coin) reste sous le curseur, la barre étant réduite de `factor`.
+pub fn drag_origin(cursor: (i32, i32), grab: (i32, i32), factor: f32) -> (i32, i32) {
+    (cursor.0 - (grab.0 as f32 * factor).round() as i32, cursor.1 - (grab.1 as f32 * factor).round() as i32)
+}
 
 /// Élément de la barre d'outils.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -29,6 +39,8 @@ pub enum Item {
     Pin,
     Clear,
     Settings,
+    /// Ouvre la page d'aide.
+    Help,
     Separator,
 }
 
@@ -44,6 +56,13 @@ impl Layout {
     /// Élément cliquable sous un point (les filets ne le sont pas).
     pub fn hit(&self, p: Pt) -> Option<Item> {
         self.items.iter().find(|(i, r)| *i != Item::Separator && r.contains(p)).map(|(i, _)| *i)
+    }
+
+    /// Vrai si un point de la barre sert de poignée de déplacement : tout sauf un bouton
+    /// (le logo, les filets, les marges et les espaces entre boutons).
+    pub fn is_handle(&self, p: Pt) -> bool {
+        let inside = p.x >= 0.0 && p.x < self.w && p.y >= 0.0 && p.y < self.h;
+        inside && matches!(self.hit(p), None | Some(Item::Logo))
     }
 
     pub fn rect(&self, item: Item) -> Option<RectF> {
@@ -66,7 +85,7 @@ fn groups() -> Vec<Vec<Item>> {
         ],
         vec![Item::Color, Item::Width],
         vec![Item::Halo, Item::Ripple, Item::Trail],
-        vec![Item::Pin, Item::Clear, Item::Settings],
+        vec![Item::Pin, Item::Clear, Item::Settings, Item::Help],
     ]
 }
 
@@ -116,21 +135,33 @@ pub fn tool_action(tool: Tool) -> Action {
     }
 }
 
+/// Nom d'un outil dans une langue.
+pub fn tool_label_in(tool: Tool, lang: Lang) -> &'static str {
+    tool_action(tool).label_in(lang)
+}
+
 /// Bulle d'aide d'un élément : nom et, s'il y en a un, raccourci.
 pub fn tooltip(item: Item, bindings: &Bindings) -> Option<(String, Option<String>)> {
-    let key = |a: Action| Some(bindings.get(a).to_string());
+    tooltip_in(item, bindings, Lang::Fr)
+}
+
+/// Bulle d'aide dans une langue.
+pub fn tooltip_in(item: Item, bindings: &Bindings, lang: Lang) -> Option<(String, Option<String>)> {
+    let key = |a: Action| Some(bindings.get(a).display(lang));
+    let fr = lang == Lang::Fr;
     let (name, shortcut) = match item {
         Item::Logo => ("Ekspointer", None),
-        Item::Tool(None) => ("Curseur", key(Action::ExitDraw)),
-        Item::Tool(Some(tool)) => (tool_label(tool), key(tool_action(tool))),
-        Item::Color => ("Couleur", None),
-        Item::Width => ("Épaisseur", None),
+        Item::Tool(None) => (if fr { "Curseur" } else { "Cursor" }, key(Action::ExitDraw)),
+        Item::Tool(Some(tool)) => (tool_label_in(tool, lang), key(tool_action(tool))),
+        Item::Color => (if fr { "Couleur" } else { "Color" }, None),
+        Item::Width => (if fr { "Épaisseur" } else { "Thickness" }, None),
         Item::Halo => ("Halo", key(Action::ToggleHalo)),
-        Item::Ripple => ("Onde au clic", None),
-        Item::Trail => ("Traînée laser", None),
-        Item::Pin => ("Épingler", None),
-        Item::Clear => ("Tout effacer", key(Action::ClearAll)),
-        Item::Settings => ("Réglages", None),
+        Item::Ripple => (if fr { "Onde au clic" } else { "Click ripple" }, None),
+        Item::Trail => (if fr { "Traînée laser" } else { "Laser trail" }, None),
+        Item::Pin => (if fr { "Garder les tracés à l'écran" } else { "Keep drawings on screen" }, None),
+        Item::Clear => (Action::ClearAll.label_in(lang), key(Action::ClearAll)),
+        Item::Settings => (crate::i18n::t(lang, crate::i18n::Text::Settings), None),
+        Item::Help => (crate::i18n::t(lang, crate::i18n::Text::Help), None),
         Item::Separator => return None,
     };
     Some((name.to_string(), shortcut))
@@ -156,9 +187,9 @@ fn popover(count: usize, cell: f32) -> Popover {
     Popover { w: 2.0 * PAD + count as f32 * cell + (count as f32 - 1.0) * GAP, h: 2.0 * PAD + cell, cells }
 }
 
-/// Volet des six couleurs.
+/// Volet des couleurs.
 pub fn color_popover() -> Popover {
-    popover(6, 36.0)
+    popover(crate::geom::PALETTE.len(), 36.0)
 }
 
 /// Volet des trois épaisseurs.
@@ -199,7 +230,8 @@ mod tests {
                 Item::Trail,
                 Item::Pin,
                 Item::Clear,
-                Item::Settings
+                Item::Settings,
+                Item::Help
             ]
         );
         assert_eq!(l.items.iter().filter(|(i, _)| *i == Item::Separator).count(), 4);
@@ -245,12 +277,13 @@ mod tests {
         assert_eq!(t(Item::Tool(None)), Some(("Curseur".into(), Some("Échap".into()))));
         assert_eq!(t(Item::Clear), Some(("Tout effacer".into(), Some("Ctrl+Alt+E".into()))));
         assert_eq!(t(Item::Halo), Some(("Halo".into(), Some("Ctrl+Alt+H".into()))));
-        assert_eq!(t(Item::Pin), Some(("Épingler".into(), None)));
+        assert_eq!(t(Item::Pin), Some(("Garder les tracés à l'écran".into(), None)));
         assert_eq!(t(Item::Ripple), Some(("Onde au clic".into(), None)));
         assert_eq!(t(Item::Trail), Some(("Traînée laser".into(), None)));
         assert_eq!(t(Item::Color), Some(("Couleur".into(), None)));
         assert_eq!(t(Item::Width), Some(("Épaisseur".into(), None)));
         assert_eq!(t(Item::Settings), Some(("Réglages".into(), None)));
+        assert_eq!(t(Item::Help), Some(("Aide".into(), None)));
         assert_eq!(t(Item::Separator), None);
     }
 
@@ -264,7 +297,7 @@ mod tests {
     #[test]
     fn popover_layouts() {
         let c = color_popover();
-        assert_eq!(c.cells.len(), 6);
+        assert_eq!(c.cells.len(), 10);
         let w = width_popover();
         assert_eq!(w.cells.len(), 3);
         for p in [&c, &w] {
@@ -276,5 +309,51 @@ mod tests {
             assert_eq!(p.hit(Pt::new(p.cells[1].x + 2.0, p.cells[1].y + 2.0)), Some(1));
             assert_eq!(p.hit(Pt::new(-1.0, -1.0)), None);
         }
+    }
+
+    #[test]
+    fn tooltips_in_english() {
+        use crate::i18n::Lang;
+        let b = Bindings::defaults();
+        let t = |i| tooltip_in(i, &b, Lang::En);
+        assert_eq!(t(Item::Tool(Some(Tool::Arrow))), Some(("Arrow".into(), Some("F".into()))));
+        assert_eq!(t(Item::Tool(None)), Some(("Cursor".into(), Some("Esc".into()))));
+        assert_eq!(t(Item::Tool(Some(Tool::Free))), Some(("Freehand".into(), Some("D".into()))));
+        assert_eq!(t(Item::Clear), Some(("Clear all".into(), Some("Ctrl+Alt+E".into()))));
+        assert_eq!(t(Item::Ripple), Some(("Click ripple".into(), None)));
+        assert_eq!(t(Item::Trail), Some(("Laser trail".into(), None)));
+        assert_eq!(t(Item::Pin), Some(("Keep drawings on screen".into(), None)));
+        assert_eq!(t(Item::Width), Some(("Thickness".into(), None)));
+        assert_eq!(t(Item::Settings), Some(("Settings".into(), None)));
+        assert_eq!(t(Item::Help), Some(("Help".into(), None)));
+        assert_eq!(tooltip_in(Item::Clear, &b, Lang::Fr), tooltip(Item::Clear, &b));
+    }
+
+    #[test]
+    fn anything_but_a_button_moves_the_bar() {
+        let l = layout(false);
+        // Le logo, les filets, les marges et les espaces entre boutons servent de poignée.
+        assert!(l.is_handle(Pt::new(l.rect(Item::Logo).unwrap().x + 5.0, 28.0)));
+        let sep = l.items.iter().find(|(i, _)| *i == Item::Separator).unwrap().1;
+        assert!(l.is_handle(Pt::new(sep.x, sep.y + 5.0)));
+        assert!(l.is_handle(Pt::new(3.0, 3.0)));
+        let arrow = l.rect(Item::Tool(Some(Tool::Arrow))).unwrap();
+        assert!(l.is_handle(Pt::new(arrow.x + arrow.w + 2.0, 28.0))); // entre deux boutons
+        assert!(l.is_handle(Pt::new(arrow.x + 20.0, 3.0))); // au-dessus d'un bouton
+        // Un bouton, lui, se clique.
+        assert!(!l.is_handle(Pt::new(arrow.x + 20.0, arrow.y + 20.0)));
+        assert!(!l.is_handle(Pt::new(l.rect(Item::Settings).unwrap().x + 20.0, 28.0)));
+        assert!(!l.is_handle(Pt::new(l.rect(Item::Help).unwrap().x + 20.0, 28.0)));
+        // Repliée, la barre entière est une poignée.
+        assert!(layout(true).is_handle(Pt::new(28.0, 28.0)));
+    }
+
+    #[test]
+    fn bar_shrinks_by_half_while_dragged_and_stays_under_the_cursor() {
+        assert_eq!(DRAG_SHRINK, 0.5);
+        // Le point saisi reste sous le curseur, à taille normale comme à taille réduite.
+        assert_eq!(drag_origin((1000, 500), (200, 40), 1.0), (800, 460));
+        assert_eq!(drag_origin((1000, 500), (200, 40), DRAG_SHRINK), (900, 480));
+        assert_eq!(drag_origin((-50, 10), (0, 0), DRAG_SHRINK), (-50, 10));
     }
 }

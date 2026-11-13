@@ -1,9 +1,16 @@
 //! Réglages : modèle, lecture tolérante, écriture atomique.
 
+use crate::i18n::Lang;
 use crate::shapes::Tool;
 use crate::shortcuts::Bindings;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+
+/// Version du format des réglages.
+///
+/// 2 (Ekspointer 0.1.1) : effacement après 1 s au lieu de 5, halo et onde au clic actifs,
+/// barre d'outils visible dans le partage d'écran.
+pub const CURRENT_VERSION: u32 = 2;
 
 /// Réglages de l'application, enregistrés dans `config.json` à côté de l'exécutable.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
@@ -11,17 +18,19 @@ use std::path::{Path, PathBuf};
 pub struct Config {
     /// Version du format du fichier.
     pub version: u32,
-    /// Durée avant effacement, en secondes (2 à 15).
+    /// Langue de l'interface.
+    pub language: Lang,
+    /// Durée avant effacement, en secondes (1 à 15).
     pub hold_seconds: u8,
     /// Indice de l'épaisseur dans `geom::WIDTHS` (0 à 2).
     pub width: u8,
-    /// Indice de la couleur dans `geom::PALETTE` (0 à 5).
+    /// Indice de la couleur dans `geom::PALETTE` (0 à 9).
     pub color: u8,
     pub last_tool: Tool,
     pub halo_on: bool,
     /// Diamètre du halo en pixels logiques (40 à 120).
     pub halo_size: u32,
-    /// Le halo prend la couleur de dessin ; sinon il reste ambre.
+    /// Le halo prend la couleur de dessin ; sinon il est jaune fluo.
     pub halo_follows_color: bool,
     pub ripple_on: bool,
     pub trail_on: bool,
@@ -37,21 +46,22 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Config {
         Config {
-            version: 1,
-            hold_seconds: 5,
+            version: CURRENT_VERSION,
+            language: Lang::Fr,
+            hold_seconds: 1,
             width: 1,
             color: 0,
             last_tool: Tool::Arrow,
-            halo_on: false,
+            halo_on: true,
             halo_size: 64,
             halo_follows_color: true,
-            ripple_on: false,
+            ripple_on: true,
             trail_on: false,
             pinned: false,
             bindings: Bindings::defaults(),
             toolbar_pos: None,
             toolbar_collapsed: false,
-            hide_from_capture: true,
+            hide_from_capture: false,
         }
     }
 }
@@ -59,9 +69,9 @@ impl Default for Config {
 impl Config {
     /// Ramène chaque valeur dans ses bornes.
     pub fn sanitize(&mut self) {
-        self.hold_seconds = self.hold_seconds.clamp(2, 15);
+        self.hold_seconds = self.hold_seconds.clamp(1, 15);
         self.width = self.width.min(2);
-        self.color = self.color.min(5);
+        self.color = self.color.min(crate::geom::PALETTE.len() as u8 - 1);
         self.halo_size = self.halo_size.clamp(40, 120);
     }
 }
@@ -106,6 +116,9 @@ fn lenient(value: &serde_json::Value) -> Option<Config> {
     if let Some(n) = number("halo_size", 100_000.0) {
         c.halo_size = n as u32;
     }
+    if let Some(language) = obj.get("language").and_then(|v| serde_json::from_value(v.clone()).ok()) {
+        c.language = language;
+    }
     if let Some(tool) = obj.get("last_tool").and_then(|v| serde_json::from_value(v.clone()).ok()) {
         c.last_tool = tool;
     }
@@ -122,6 +135,23 @@ fn lenient(value: &serde_json::Value) -> Option<Config> {
     c.pinned = flag("pinned", c.pinned);
     c.toolbar_collapsed = flag("toolbar_collapsed", c.toolbar_collapsed);
     c.hide_from_capture = flag("hide_from_capture", c.hide_from_capture);
+    // Fichier d'une version antérieure : il porte d'anciennes valeurs par défaut, que
+    // l'utilisateur n'a pas choisies. Les réglages dont le défaut a changé prennent le nouveau.
+    let version = obj.get("version").and_then(|v| v.as_u64()).unwrap_or(CURRENT_VERSION as u64);
+    if version < 2 {
+        // La palette de la version 1 (ambre, bleu, encre, jaune, vert, blanc) a été réordonnée.
+        const FROM_V1: [u8; 6] = [6, 3, 7, 0, 2, 5];
+        c.color = obj
+            .get("color")
+            .and_then(|v| v.as_u64())
+            .and_then(|old| FROM_V1.get(old as usize).copied())
+            .unwrap_or(0);
+        let fresh = Config::default();
+        c.hold_seconds = fresh.hold_seconds;
+        c.halo_on = fresh.halo_on;
+        c.ripple_on = fresh.ripple_on;
+        c.hide_from_capture = fresh.hide_from_capture;
+    }
     c.sanitize();
     Some(c)
 }
@@ -184,11 +214,11 @@ mod tests {
     #[test]
     fn defaults_match_spec() {
         let c = Config::default();
-        assert_eq!((c.version, c.hold_seconds, c.width, c.color), (1, 5, 1, 0));
+        assert_eq!((c.version, c.hold_seconds, c.width, c.color), (2, 1, 1, 0));
         assert_eq!(c.last_tool, Tool::Arrow);
-        assert_eq!((c.halo_on, c.halo_size, c.halo_follows_color), (false, 64, true));
-        assert_eq!((c.ripple_on, c.trail_on, c.pinned), (false, false, false));
-        assert_eq!((c.toolbar_pos, c.toolbar_collapsed, c.hide_from_capture), (None, false, true));
+        assert_eq!((c.halo_on, c.halo_size, c.halo_follows_color), (true, 64, true));
+        assert_eq!((c.ripple_on, c.trail_on, c.pinned), (true, false, false));
+        assert_eq!((c.toolbar_pos, c.toolbar_collapsed, c.hide_from_capture), (None, false, false));
         assert_eq!(c.bindings, Bindings::defaults());
     }
 
@@ -196,8 +226,8 @@ mod tests {
     fn missing_file_gives_defaults() {
         let (c, o) = load(&tmp("absent.json"));
         assert!(matches!(o, LoadOutcome::Defaults));
-        assert_eq!(c.hold_seconds, 5);
-        assert!(c.hide_from_capture);
+        assert_eq!(c.hold_seconds, 1);
+        assert!(!c.hide_from_capture);
     }
 
     #[test]
@@ -231,7 +261,7 @@ mod tests {
         let p = tmp("config.json");
         std::fs::write(&p, "{ pas du json").unwrap();
         let (c, o) = load(&p);
-        assert_eq!(c.hold_seconds, 5);
+        assert_eq!(c.hold_seconds, 1);
         match o {
             LoadOutcome::Invalid { backup } => {
                 assert_eq!(backup.file_name().unwrap(), "config.invalide.json");
@@ -255,12 +285,12 @@ mod tests {
     #[test]
     fn sanitize_clamps_out_of_range() {
         let p = tmp("range.json");
-        std::fs::write(&p, r#"{"hold_seconds":200,"width":7,"color":9,"halo_size":5}"#).unwrap();
+        std::fs::write(&p, r#"{"hold_seconds":200,"width":7,"color":99,"halo_size":5}"#).unwrap();
         let (c, _) = load(&p);
-        assert_eq!((c.hold_seconds, c.width, c.color, c.halo_size), (15, 2, 5, 40));
+        assert_eq!((c.hold_seconds, c.width, c.color, c.halo_size), (15, 2, 9, 40));
         std::fs::write(&p, r#"{"hold_seconds":0,"halo_size":100000}"#).unwrap();
         let (c, _) = load(&p);
-        assert_eq!((c.hold_seconds, c.halo_size), (2, 120));
+        assert_eq!((c.hold_seconds, c.halo_size), (1, 120));
     }
 
     #[test]
@@ -303,7 +333,7 @@ mod tests {
         assert_eq!(c.width, 1); // illisible : valeur par défaut
         assert_eq!(c.last_tool, Tool::Arrow);
         assert_eq!(c.halo_size, 90);
-        assert!(!c.halo_on);
+        assert!(c.halo_on); // illisible : valeur par défaut
         assert_eq!(c.toolbar_pos, None);
         assert_eq!(c.bindings.get(Action::ToggleDraw).to_string(), "Ctrl+Alt+X");
         assert!(p.exists() && !p.with_file_name("config.invalide.json").exists());
@@ -339,5 +369,68 @@ mod tests {
         let p = tmp("config.json");
         std::fs::write(&p, "[1, 2, 3]").unwrap();
         assert!(matches!(load(&p).1, LoadOutcome::Invalid { .. }));
+    }
+
+    #[test]
+    fn one_second_is_a_valid_duration() {
+        let p = tmp("one.json");
+        std::fs::write(&p, r#"{"version":2,"hold_seconds":1}"#).unwrap();
+        assert_eq!(load(&p).0.hold_seconds, 1);
+    }
+
+    #[test]
+    fn settings_from_version_1_take_the_new_defaults() {
+        // Un fichier écrit par la version 0.1.0 porte les anciennes valeurs par défaut, que
+        // l'utilisateur n'a pas choisies : les quatre réglages concernés passent aux nouvelles.
+        let p = tmp("v1.json");
+        std::fs::write(
+            &p,
+            r#"{"version":1,"hold_seconds":5,"halo_on":false,"ripple_on":false,"hide_from_capture":true,
+                "color":3,"trail_on":true,"bindings":{"ToggleDraw":"2×Tab"}}"#,
+        )
+        .unwrap();
+        let (c, o) = load(&p);
+        assert!(matches!(o, LoadOutcome::Loaded));
+        assert_eq!((c.version, c.hold_seconds, c.halo_on, c.ripple_on, c.hide_from_capture), (2, 1, true, true, false));
+        // Le reste est conservé.
+        assert_eq!((c.color, c.trail_on), (0, true)); // l'ancien jaune (3) est le nouveau jaune (0)
+        assert_eq!(c.bindings.get(Action::ToggleDraw).to_string(), "2×Tab");
+    }
+
+    #[test]
+    fn settings_from_the_current_version_are_kept() {
+        let p = tmp("v2.json");
+        std::fs::write(&p, r#"{"version":2,"hold_seconds":5,"halo_on":false,"ripple_on":false,"hide_from_capture":true}"#).unwrap();
+        let (c, _) = load(&p);
+        assert_eq!((c.hold_seconds, c.halo_on, c.ripple_on, c.hide_from_capture), (5, false, false, true));
+    }
+
+    #[test]
+    fn language_is_remembered() {
+        use crate::i18n::Lang;
+        assert_eq!(Config::default().language, Lang::Fr);
+        let p = tmp("lang.json");
+        let mut c = Config::default();
+        c.language = Lang::En;
+        save(&p, &c).unwrap();
+        assert_eq!(load(&p).0.language, Lang::En);
+        std::fs::write(&p, r#"{"version":2,"language":"klingon"}"#).unwrap();
+        assert_eq!(load(&p).0.language, Lang::Fr); // illisible : valeur par défaut
+    }
+
+    #[test]
+    fn default_color_is_yellow() {
+        use crate::geom::{Rgba, PALETTE};
+        assert_eq!(PALETTE[Config::default().color as usize], Rgba::hex(0xFFC400));
+    }
+
+    #[test]
+    fn colors_of_a_version_1_file_keep_their_hue() {
+        // Ancien ordre : ambre, bleu, encre, jaune, vert, blanc.
+        for (old, new) in [(0, 6), (1, 3), (2, 7), (3, 0), (4, 2), (5, 5)] {
+            let p = tmp("v1color.json");
+            std::fs::write(&p, format!(r#"{{"version":1,"color":{old}}}"#)).unwrap();
+            assert_eq!(load(&p).0.color, new, "ancienne couleur {old}");
+        }
     }
 }

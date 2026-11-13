@@ -1,5 +1,6 @@
 //! Raccourcis clavier : modèle, analyse, affichage, détection de conflits.
 
+use crate::i18n::Lang;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::BTreeMap;
 use std::fmt;
@@ -87,6 +88,31 @@ const NAMED_KEYS: [(&str, u32); 15] = [
     ("Droite", 0x27),
 ];
 
+/// Noms anglais des touches nommées, dans le même ordre que `NAMED_KEYS`.
+const NAMED_KEYS_EN: [&str; 15] = [
+    "Backspace", "Ins", "Home", "End", "PgUp", "PgDn", "Esc", "Space", "Enter", "Tab", "Del", "Up", "Down", "Left", "Right",
+];
+
+/// Nom d'une touche dans une langue ; « Touche<code> » ou « Key<code> » si elle n'a pas de nom.
+fn key_name_in(vk: u32, lang: Lang) -> String {
+    let vk = normalize_vk(vk);
+    if let Some((_, v)) = DOUBLE_MODS.iter().find(|(_, v)| *v == vk) {
+        return match (lang, *v) {
+            (Lang::En, 0xA0) => "Shift".to_string(),
+            _ => DOUBLE_MODS.iter().find(|(_, d)| d == v).map(|(n, _)| n.to_string()).unwrap_or_default(),
+        };
+    }
+    if lang == Lang::En {
+        if let Some(i) = NAMED_KEYS.iter().position(|(_, v)| *v == vk) {
+            return NAMED_KEYS_EN[i].to_string();
+        }
+    }
+    key_name(vk).unwrap_or_else(|| match lang {
+        Lang::Fr => format!("Touche{vk}"),
+        Lang::En => format!("Key{vk}"),
+    })
+}
+
 fn key_name(vk: u32) -> Option<String> {
     let vk = normalize_vk(vk);
     match vk {
@@ -119,21 +145,22 @@ fn key_from_name(name: &str) -> Option<u32> {
     if let Some(v) = NAMED_KEYS.iter().find(|(n, _)| n.to_lowercase() == lower).map(|(_, v)| *v) {
         return Some(v);
     }
+    // Noms anglais, tels que l'interface les affiche en anglais.
+    if let Some(i) = NAMED_KEYS_EN.iter().position(|n| n.to_lowercase() == lower) {
+        return Some(NAMED_KEYS[i].1);
+    }
+    if let Some(v) = lower.strip_prefix("key").and_then(|n| n.parse::<u32>().ok()).filter(|v| (1..=0xFE).contains(v)) {
+        return Some(normalize_vk(v));
+    }
     // Touche sans nom, écrite « Touche<code> » : ponctuation, touche ², pavé numérique, etc.
     lower.strip_prefix("touche").and_then(|n| n.parse::<u32>().ok()).filter(|v| (1..=0xFE).contains(v)).map(normalize_vk)
 }
 
-impl fmt::Display for Shortcut {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Shortcut {
+    /// Texte du raccourci dans une langue (« Ctrl+Maj+F5 » ou « Ctrl+Shift+F5 »).
+    pub fn display(&self, lang: Lang) -> String {
         if self.double {
-            let vk = self.key.unwrap_or(0);
-            let name = DOUBLE_MODS
-                .iter()
-                .find(|(_, v)| *v == vk)
-                .map(|(n, _)| n.to_string())
-                .or_else(|| key_name(vk))
-                .unwrap_or_else(|| format!("Touche{vk}"));
-            return write!(f, "2×{name}");
+            return format!("2×{}", key_name_in(self.key.unwrap_or(0), lang));
         }
         let mut parts: Vec<String> = Vec::new();
         if self.mods.ctrl {
@@ -143,15 +170,22 @@ impl fmt::Display for Shortcut {
             parts.push("Alt".into());
         }
         if self.mods.shift {
-            parts.push("Maj".into());
+            parts.push(if lang == Lang::En { "Shift" } else { "Maj" }.into());
         }
         if self.mods.win {
             parts.push("Win".into());
         }
         if let Some(vk) = self.key {
-            parts.push(key_name(vk).unwrap_or_else(|| format!("Touche{vk}")));
+            parts.push(key_name_in(vk, lang));
         }
-        f.write_str(&parts.join("+"))
+        parts.join("+")
+    }
+}
+
+/// Forme française : c'est celle du fichier de réglages, quelle que soit la langue de l'interface.
+impl fmt::Display for Shortcut {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.display(Lang::Fr))
     }
 }
 
@@ -226,14 +260,20 @@ pub enum Action {
     ToolFree,
     ToolHighlighter,
     ToolNumber,
-    /// Couleur d'indice 0 à 5.
+    /// Couleur d'indice 0 à 9.
     Color(u8),
     Undo,
     ExitDraw,
 }
 
-const COLOR_LABELS: [&str; 6] = ["Couleur 1", "Couleur 2", "Couleur 3", "Couleur 4", "Couleur 5", "Couleur 6"];
-const COLOR_NAMES: [&str; 6] = ["Color1", "Color2", "Color3", "Color4", "Color5", "Color6"];
+const COLOR_LABELS: [&str; 10] = [
+    "Couleur 1", "Couleur 2", "Couleur 3", "Couleur 4", "Couleur 5", "Couleur 6", "Couleur 7", "Couleur 8", "Couleur 9",
+    "Couleur 10",
+];
+const COLOR_LABELS_EN: [&str; 10] =
+    ["Color 1", "Color 2", "Color 3", "Color 4", "Color 5", "Color 6", "Color 7", "Color 8", "Color 9", "Color 10"];
+const COLOR_NAMES: [&str; 10] =
+    ["Color1", "Color2", "Color3", "Color4", "Color5", "Color6", "Color7", "Color8", "Color9", "Color10"];
 
 impl Action {
     /// Toutes les actions, dans l'ordre d'affichage des réglages.
@@ -250,7 +290,7 @@ impl Action {
             Action::ToolHighlighter,
             Action::ToolNumber,
         ];
-        v.extend((0..6).map(Action::Color));
+        v.extend((0..10).map(Action::Color));
         v.extend([Action::Undo, Action::ExitDraw]);
         v
     }
@@ -273,9 +313,31 @@ impl Action {
             Action::ToolFree => "Trait libre",
             Action::ToolHighlighter => "Surligneur",
             Action::ToolNumber => "Numéros",
-            Action::Color(i) => COLOR_LABELS[(i as usize).min(5)],
+            Action::Color(i) => COLOR_LABELS[(i as usize).min(9)],
             Action::Undo => "Annuler la dernière forme",
             Action::ExitDraw => "Quitter le mode dessin",
+        }
+    }
+
+    /// Libellé dans une langue.
+    pub fn label_in(self, lang: Lang) -> &'static str {
+        if lang == Lang::Fr {
+            return self.label();
+        }
+        match self {
+            Action::ToggleDraw => "Toggle drawing",
+            Action::HoldDraw => "Draw while held",
+            Action::ClearAll => "Clear all",
+            Action::ToggleHalo => "Show halo",
+            Action::ToolArrow => "Arrow",
+            Action::ToolRect => "Rectangle",
+            Action::ToolEllipse => "Ellipse",
+            Action::ToolFree => "Freehand",
+            Action::ToolHighlighter => "Highlighter",
+            Action::ToolNumber => "Numbers",
+            Action::Color(i) => COLOR_LABELS_EN[(i as usize).min(9)],
+            Action::Undo => "Undo last shape",
+            Action::ExitDraw => "Leave drawing mode",
         }
     }
 
@@ -292,7 +354,7 @@ impl Action {
             Action::ToolFree => "ToolFree",
             Action::ToolHighlighter => "ToolHighlighter",
             Action::ToolNumber => "ToolNumber",
-            Action::Color(i) => COLOR_NAMES[(i as usize).min(5)],
+            Action::Color(i) => COLOR_NAMES[(i as usize).min(9)],
             Action::Undo => "Undo",
             Action::ExitDraw => "ExitDraw",
         }
@@ -314,7 +376,7 @@ impl Action {
             Action::ToolFree => "D",
             Action::ToolHighlighter => "S",
             Action::ToolNumber => "N",
-            Action::Color(i) => ["1", "2", "3", "4", "5", "6"][(i as usize).min(5)],
+            Action::Color(i) => ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"][(i as usize).min(9)],
             Action::Undo => "Ctrl+Z",
             Action::ExitDraw => "Échap",
         };
@@ -346,21 +408,42 @@ impl KeyState {
 pub enum BindError {
     /// Le raccourci est déjà pris par cette action.
     Conflict(Action),
-    /// Le raccourci ne convient pas à l'action ; le texte explique pourquoi.
-    Invalid(&'static str),
+    /// Le raccourci ne convient pas à l'action.
+    Invalid(Reason),
+}
+
+/// Pourquoi un raccourci ne convient pas à une action.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Reason {
+    /// Le raccourci de maintien ne comporte que des touches de modification.
+    HoldModifiersOnly,
+    /// Il manque une touche.
+    NeedsKey,
+    /// Un raccourci global ne doit pas être une touche de frappe ordinaire.
+    NeedsModifier,
+}
+
+impl Reason {
+    /// Explication affichée dans les réglages.
+    pub fn message(self, lang: Lang) -> &'static str {
+        match (self, lang) {
+            (Reason::HoldModifiersOnly, Lang::Fr) => "Ce raccourci se maintient : utilisez seulement Ctrl, Alt, Maj ou Win.",
+            (Reason::HoldModifiersOnly, Lang::En) => "This shortcut is held down: use only Ctrl, Alt, Shift or Win.",
+            (Reason::NeedsKey, Lang::Fr) => "Ajoutez une touche à ce raccourci.",
+            (Reason::NeedsKey, Lang::En) => "Add a key to this shortcut.",
+            (Reason::NeedsModifier, Lang::Fr) => "Ajoutez Ctrl, Alt ou Win, ou choisissez une touche de fonction.",
+            (Reason::NeedsModifier, Lang::En) => "Add Ctrl, Alt or Win, or pick a function key.",
+        }
+    }
 }
 
 /// Vérifie qu'un raccourci convient à une action, indépendamment des autres raccourcis.
-pub fn validate(action: Action, s: Shortcut) -> Result<(), &'static str> {
+pub fn validate(action: Action, s: Shortcut) -> Result<(), Reason> {
     if action == Action::HoldDraw {
-        return if s.key.is_none() && !s.mods.is_empty() && !s.double {
-            Ok(())
-        } else {
-            Err("Ce raccourci se maintient : utilisez seulement Ctrl, Alt, Maj ou Win.")
-        };
+        return if s.key.is_none() && !s.mods.is_empty() && !s.double { Ok(()) } else { Err(Reason::HoldModifiersOnly) };
     }
     let Some(key) = s.key else {
-        return Err("Ajoutez une touche à ce raccourci.");
+        return Err(Reason::NeedsKey);
     };
     if s.double {
         return Ok(());
@@ -369,7 +452,7 @@ pub fn validate(action: Action, s: Shortcut) -> Result<(), &'static str> {
     // intercepté dans toutes les applications.
     let function_key = (0x70..=0x7B).contains(&key);
     if action.is_global() && !(s.mods.ctrl || s.mods.alt || s.mods.win || function_key) {
-        return Err("Ajoutez Ctrl, Alt ou Win, ou choisissez une touche de fonction.");
+        return Err(Reason::NeedsModifier);
     }
     Ok(())
 }
@@ -511,9 +594,11 @@ mod tests {
         assert_eq!(g(Action::ToolNumber), "N");
         assert_eq!(g(Action::Color(0)), "1");
         assert_eq!(g(Action::Color(5)), "6");
+        assert_eq!(g(Action::Color(8)), "9");
+        assert_eq!(g(Action::Color(9)), "0"); // la dixième couleur est sur la touche 0
         assert_eq!(g(Action::Undo), "Ctrl+Z");
         assert_eq!(g(Action::ExitDraw), "Échap");
-        assert_eq!(b.all().len(), 18);
+        assert_eq!(b.all().len(), 22);
     }
 
     #[test]
@@ -714,5 +799,60 @@ mod tests {
             assert_eq!(s.to_string(), format!("Ctrl+{name}"));
         }
         assert_eq!(sc("Ctrl+Touche222").key, Some(222)); // touche ² du clavier français
+    }
+
+    #[test]
+    fn shortcuts_display_in_english() {
+        use crate::i18n::Lang;
+        for (fr, en) in [
+            ("Ctrl+Maj+F5", "Ctrl+Shift+F5"),
+            ("Échap", "Esc"),
+            ("Win+Espace", "Win+Space"),
+            ("Alt+Gauche", "Alt+Left"),
+            ("Ctrl+Suppr", "Ctrl+Del"),
+            ("Ctrl+Retour arrière", "Ctrl+Backspace"),
+            ("2×Maj", "2×Shift"),
+            ("2×Tab", "2×Tab"),
+            ("Ctrl+Touche222", "Ctrl+Key222"),
+        ] {
+            assert_eq!(sc(fr).display(Lang::En), en);
+            assert_eq!(sc(fr).display(Lang::Fr), fr);
+            // Le nom anglais se relit aussi, et le fichier de réglages garde la forme française.
+            assert_eq!(sc(en), sc(fr), "{en}");
+            assert_eq!(sc(en).to_string(), fr);
+        }
+    }
+
+    #[test]
+    fn labels_and_refusal_reasons_are_translated() {
+        use crate::i18n::Lang;
+        assert_eq!(Action::ToggleDraw.label_in(Lang::En), "Toggle drawing");
+        assert_eq!(Action::HoldDraw.label_in(Lang::En), "Draw while held");
+        assert_eq!(Action::ClearAll.label_in(Lang::En), "Clear all");
+        assert_eq!(Action::ToolArrow.label_in(Lang::En), "Arrow");
+        assert_eq!(Action::ToolHighlighter.label_in(Lang::En), "Highlighter");
+        assert_eq!(Action::Color(2).label_in(Lang::En), "Color 3");
+        assert_eq!(Action::ExitDraw.label_in(Lang::En), "Leave drawing mode");
+        for a in Action::all() {
+            assert_eq!(a.label_in(Lang::Fr), a.label());
+            assert!(!a.label_in(Lang::En).is_empty());
+        }
+        for reason in [Reason::HoldModifiersOnly, Reason::NeedsKey, Reason::NeedsModifier] {
+            assert_ne!(reason.message(Lang::Fr), reason.message(Lang::En));
+        }
+        let mut b = Bindings::defaults();
+        assert_eq!(b.set(Action::ClearAll, sc("E")), Err(BindError::Invalid(Reason::NeedsModifier)));
+        assert_eq!(b.set(Action::ToggleDraw, sc("Ctrl")), Err(BindError::Invalid(Reason::NeedsKey)));
+        assert_eq!(b.set(Action::HoldDraw, sc("X")), Err(BindError::Invalid(Reason::HoldModifiersOnly)));
+    }
+
+    #[test]
+    fn ten_colors_have_labels_and_names() {
+        use crate::i18n::Lang;
+        assert_eq!(Action::Color(9).label(), "Couleur 10");
+        assert_eq!(Action::Color(9).label_in(Lang::En), "Color 10");
+        assert_eq!(Action::Color(9).name(), "Color10");
+        assert_eq!(Action::from_name("Color10"), Some(Action::Color(9)));
+        assert_eq!(Action::all().iter().filter(|a| matches!(a, Action::Color(_))).count(), 10);
     }
 }

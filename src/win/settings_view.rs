@@ -1,12 +1,14 @@
-//! Panneau de réglages : état d'affichage, réactions à la souris et dessin.
+//! Panneau de réglages et d'aide : état d'affichage, réactions à la souris et dessin.
 
 use super::gfx::{Align, Family, Gfx, Painter};
 use super::panel::{Panel, PanelEvent, PanelId};
-use super::ui::SURFACE;
+use super::ui::{cursor, SURFACE};
 use ekspointer::app::{App, UiCommand};
 use ekspointer::geom::{Pt, RectF, Rgba, WIDTHS};
+use ekspointer::i18n::{t, Lang, Text};
 use ekspointer::shortcuts::Action;
-use ekspointer::ui::settings::{self, Row, HEADER_H, PAD, PANEL_H, PANEL_W};
+use ekspointer::ui::help::{self, Line};
+use ekspointer::ui::settings::{self, HeaderPart, Row, Tab, HEADER_H, PANEL_H, PANEL_W};
 use ekspointer::ui::theme;
 use windows::core::Result;
 
@@ -14,6 +16,8 @@ use windows::core::Result;
 const WARN: Rgba = Rgba::hex(0xBB450D);
 /// Durée d'affichage d'un message de conflit, en millisecondes.
 pub const CONFLICT_MS: u64 = 4000;
+/// Version affichée dans les crédits.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Ce que le panneau demande à la boucle principale.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -29,21 +33,21 @@ pub enum SettingsAction {
 /// Panneau de réglages.
 pub struct SettingsView {
     pub panel: Panel,
+    tab: Tab,
     scroll: f32,
+    help_scroll: f32,
     hover: Option<Row>,
-    hover_close: bool,
+    hover_header: Option<HeaderPart>,
     /// Curseur en cours de glissement.
     dragging: Option<Row>,
+    /// Déplacement du panneau en cours : écart entre le curseur et le coin du panneau.
+    moving: Option<(i32, i32)>,
     /// Action dont le raccourci est en cours de saisie, et type de saisie.
     pub capturing: Option<(Action, bool)>,
     /// Message de conflit : ligne concernée, texte, instant d'expiration.
     conflict: Option<(Action, String, u64)>,
     autostart: bool,
     pub dirty: bool,
-}
-
-fn close_rect() -> RectF {
-    RectF { x: PANEL_W - PAD - 30.0, y: (HEADER_H - 32.0) / 2.0, w: 32.0, h: 32.0 }
 }
 
 /// Glissière d'un curseur : la zone de contrôle moins la place de la valeur affichée.
@@ -61,6 +65,12 @@ fn width_rect(row: RectF) -> RectF {
     RectF { x: c.x + c.w - 126.0, y: c.y, w: 126.0, h: c.h }
 }
 
+/// Sélecteur de langue : deux segments, à droite de la ligne.
+fn language_rect(row: RectF) -> RectF {
+    let c = settings::control_rect(row);
+    RectF { x: c.x + c.w - 164.0, y: c.y, w: 164.0, h: c.h }
+}
+
 fn reset_rect(row: RectF) -> RectF {
     RectF { x: row.x, y: row.y + 12.0, w: 262.0, h: 32.0 }
 }
@@ -69,10 +79,13 @@ impl SettingsView {
     pub fn new(gfx: &Gfx) -> Result<SettingsView> {
         Ok(SettingsView {
             panel: Panel::new(gfx, PanelId::Settings, (PANEL_W, PANEL_H), theme::R_PANEL)?,
+            tab: Tab::Settings,
             scroll: 0.0,
+            help_scroll: 0.0,
             hover: None,
-            hover_close: false,
+            hover_header: None,
             dragging: None,
+            moving: None,
             capturing: None,
             conflict: None,
             autostart: false,
@@ -84,16 +97,26 @@ impl SettingsView {
         self.panel.visible()
     }
 
-    /// Ouvre le panneau au centre d'un écran.
-    pub fn open(&mut self, gfx: &Gfx, monitor: RectF, scale: f32, autostart: bool, appear: Option<u64>) -> Result<()> {
+    /// Ouvre le panneau au centre d'un écran, sur l'onglet donné.
+    pub fn open(
+        &mut self,
+        gfx: &Gfx,
+        monitor: RectF,
+        scale: f32,
+        autostart: bool,
+        tab: Tab,
+        appear: Option<u64>,
+    ) -> Result<()> {
         self.autostart = autostart;
+        self.tab = tab;
+        self.hover = None;
+        self.hover_header = None;
+        self.dragging = None;
+        self.moving = None;
+        self.dirty = true;
         if let Some(now) = appear {
             self.panel.start_appear(now);
         }
-        self.hover = None;
-        self.hover_close = false;
-        self.dragging = None;
-        self.dirty = true;
         let x = monitor.x + (monitor.w - PANEL_W * scale) / 2.0;
         let y = monitor.y + ((monitor.h - PANEL_H * scale) / 2.0).max(0.0);
         self.panel.place(gfx, (x as i32, y as i32), (PANEL_W, PANEL_H), theme::R_PANEL, scale)
@@ -103,6 +126,7 @@ impl SettingsView {
         self.panel.hide();
         self.capturing = None;
         self.conflict = None;
+        self.moving = None;
     }
 
     pub fn set_autostart(&mut self, on: bool) {
@@ -110,7 +134,7 @@ impl SettingsView {
         self.dirty = true;
     }
 
-    /// Affiche un message de conflit sous la ligne d'un raccourci.
+    /// Affiche un message sous la ligne d'un raccourci (conflit ou raccourci refusé).
     pub fn show_conflict(&mut self, action: Action, message: String, until: u64) {
         self.conflict = Some((action, message, until));
         self.dirty = true;
@@ -131,7 +155,7 @@ impl SettingsView {
     fn slider_command(&self, row: Row, x: f32) -> Option<SettingsAction> {
         let track = track_rect(self.row_rect(row)?);
         Some(SettingsAction::Command(match row {
-            Row::HoldSeconds => UiCommand::SetHoldSeconds(settings::slider_value(track, x, 2, 15) as u8),
+            Row::HoldSeconds => UiCommand::SetHoldSeconds(settings::slider_value(track, x, 1, 15) as u8),
             Row::HaloSize => UiCommand::SetHaloSize(settings::slider_value(track, x, 40, 120) as u32),
             _ => return None,
         }))
@@ -142,77 +166,117 @@ impl SettingsView {
         let mut out = Vec::new();
         self.dirty = true;
         match ev {
-            PanelEvent::Wheel(delta) => self.scroll = settings::clamp_scroll(self.scroll - delta * 54.0),
+            PanelEvent::Wheel(delta) => match self.tab {
+                Tab::Settings => self.scroll = settings::clamp_scroll(self.scroll - delta * 54.0),
+                Tab::Help => {
+                    let lines = help::lines(app.cfg.language, &app.cfg.bindings, VERSION);
+                    self.help_scroll = help::clamp_scroll(&lines, self.help_scroll - delta * 54.0);
+                }
+            },
             PanelEvent::Leave => {
                 self.hover = None;
-                self.hover_close = false;
+                self.hover_header = None;
+            }
+            PanelEvent::Cancel => {
+                self.dragging = None;
+                self.moving = None;
             }
             PanelEvent::Move(p) => {
                 let p = self.panel.to_dip(p);
-                if let Some(row) = self.dragging {
+                if let Some(grab) = self.moving {
+                    // Déplacement du panneau par son en-tête.
+                    let c = cursor();
+                    self.panel.move_to((c.0 - grab.0, c.1 - grab.1));
+                } else if let Some(row) = self.dragging {
                     out.extend(self.slider_command(row, p.x));
                 } else {
-                    self.hover = settings::hit(self.scroll, p);
-                    self.hover_close = close_rect().contains(p);
+                    self.hover_header = settings::header_hit(p);
+                    self.hover = if self.tab == Tab::Settings { settings::hit(self.scroll, p) } else { None };
                 }
             }
             PanelEvent::Down(p) => {
                 let p = self.panel.to_dip(p);
-                if let Some(row @ (Row::HoldSeconds | Row::HaloSize)) = settings::hit(self.scroll, p) {
-                    self.dragging = Some(row);
-                    out.extend(self.slider_command(row, p.x));
+                if settings::header_hit(p) == Some(HeaderPart::Drag) {
+                    let c = cursor();
+                    self.moving = Some((c.0 - self.panel.pos.0, c.1 - self.panel.pos.1));
+                } else if self.tab == Tab::Settings {
+                    if let Some(row @ (Row::HoldSeconds | Row::HaloSize)) = settings::hit(self.scroll, p) {
+                        self.dragging = Some(row);
+                        out.extend(self.slider_command(row, p.x));
+                    }
                 }
             }
             PanelEvent::Up(p) => {
                 let p = self.panel.to_dip(p);
-                if self.dragging.take().is_some() {
+                if self.moving.take().is_some() || self.dragging.take().is_some() {
                     return out;
                 }
-                if close_rect().contains(p) {
-                    out.push(SettingsAction::Close);
-                    return out;
+                match settings::header_hit(p) {
+                    Some(HeaderPart::Close) => {
+                        out.push(SettingsAction::Close);
+                        return out;
+                    }
+                    Some(HeaderPart::Tab(tab)) => {
+                        if tab != self.tab && self.capturing.is_some() {
+                            out.push(SettingsAction::CancelCapture);
+                        }
+                        self.tab = tab;
+                        return out;
+                    }
+                    Some(HeaderPart::Drag) => return out,
+                    None => {}
                 }
-                let Some(row) = settings::hit(self.scroll, p) else {
-                    return out;
-                };
-                let Some(r) = self.row_rect(row) else {
-                    return out;
-                };
-                let cmd = SettingsAction::Command;
-                match row {
-                    Row::Width => {
-                        if let Some(i) = settings::segment_at(width_rect(r), 3, p) {
-                            out.push(cmd(UiCommand::SetWidth(i as u8)));
-                        }
-                    }
-                    Row::HaloFollowsColor => out.push(cmd(UiCommand::SetHaloFollowsColor(!app.cfg.halo_follows_color))),
-                    Row::HideFromCapture => out.push(cmd(UiCommand::SetHideFromCapture(!app.cfg.hide_from_capture))),
-                    Row::Autostart => out.push(SettingsAction::Autostart(!self.autostart)),
-                    Row::ResetBindings => {
-                        if reset_rect(r).contains(p) {
-                            out.push(cmd(UiCommand::ResetBindings));
-                        }
-                    }
-                    Row::Binding(action) => {
-                        let (mode, pill) = settings::binding_parts(r, action);
-                        let current = app.cfg.bindings.get(action);
-                        if let Some(i) = mode.and_then(|m| settings::segment_at(m, 2, p)) {
-                            out.push(SettingsAction::Capture { action, double: i == 1 });
-                        } else if pill.contains(p) {
-                            if self.capturing.map(|(a, _)| a) == Some(action) {
-                                out.push(SettingsAction::CancelCapture);
-                            } else {
-                                out.push(SettingsAction::Capture { action, double: current.double });
-                            }
-                        }
-                    }
-                    Row::HoldSeconds | Row::HaloSize | Row::Header(_) => {}
+                if self.tab == Tab::Settings {
+                    self.click_row(p, app, &mut out);
                 }
             }
             PanelEvent::DoubleClick(_) => {}
-            PanelEvent::Cancel => self.dragging = None,
         }
         out
+    }
+
+    fn click_row(&mut self, p: Pt, app: &App, out: &mut Vec<SettingsAction>) {
+        let Some(row) = settings::hit(self.scroll, p) else {
+            return;
+        };
+        let Some(r) = self.row_rect(row) else {
+            return;
+        };
+        let cmd = SettingsAction::Command;
+        match row {
+            Row::Language => {
+                if let Some(i) = settings::segment_at(language_rect(r), 2, p) {
+                    out.push(cmd(UiCommand::SetLanguage(Lang::all()[i])));
+                }
+            }
+            Row::Width => {
+                if let Some(i) = settings::segment_at(width_rect(r), 3, p) {
+                    out.push(cmd(UiCommand::SetWidth(i as u8)));
+                }
+            }
+            Row::HaloFollowsColor => out.push(cmd(UiCommand::SetHaloFollowsColor(!app.cfg.halo_follows_color))),
+            Row::HideFromCapture => out.push(cmd(UiCommand::SetHideFromCapture(!app.cfg.hide_from_capture))),
+            Row::Autostart => out.push(SettingsAction::Autostart(!self.autostart)),
+            Row::ResetBindings => {
+                if reset_rect(r).contains(p) {
+                    out.push(cmd(UiCommand::ResetBindings));
+                }
+            }
+            Row::Binding(action) => {
+                let (mode, pill) = settings::binding_parts(r, action);
+                let current = app.cfg.bindings.get(action);
+                if let Some(i) = mode.and_then(|m| settings::segment_at(m, 2, p)) {
+                    out.push(SettingsAction::Capture { action, double: i == 1 });
+                } else if pill.contains(p) {
+                    if self.capturing.map(|(a, _)| a) == Some(action) {
+                        out.push(SettingsAction::CancelCapture);
+                    } else {
+                        out.push(SettingsAction::Capture { action, double: current.double });
+                    }
+                }
+            }
+            Row::HoldSeconds | Row::HaloSize | Row::Header(_) => {}
+        }
     }
 
     pub fn draw(&mut self, gfx: &Gfx, app: &App, now: u64) -> Result<()> {
@@ -220,51 +284,100 @@ impl SettingsView {
             return Ok(());
         }
         self.dirty = false;
-        let view = &*self;
-        let (scroll, hover, hover_close) = (view.scroll, view.hover, view.hover_close);
-        let capturing = view.capturing;
-        let conflict = view.conflict.clone();
-        let autostart = view.autostart;
+        let lang = app.cfg.language;
+        let (tab, scroll, help_scroll) = (self.tab, self.scroll, self.help_scroll);
+        let (hover, hover_header) = (self.hover, self.hover_header);
+        let capturing = self.capturing;
+        let conflict = self.conflict.clone();
+        let autostart = self.autostart;
         self.panel.draw(gfx, now, |p| {
             p.fill_rrect(RectF { x: 0.0, y: 0.0, w: PANEL_W, h: PANEL_H }, theme::R_PANEL, theme::BG);
             let body = RectF { x: 0.0, y: HEADER_H, w: PANEL_W, h: PANEL_H - HEADER_H };
-            p.with_rrect_clip(body, 0.0, || {
-                for (row, r) in settings::layout(scroll) {
-                    if r.y + r.h < HEADER_H || r.y > PANEL_H {
-                        continue;
-                    }
-                    draw_row(p, app, row, r, hover == Some(row), capturing, &conflict, autostart);
+            let (position, max, content) = match tab {
+                Tab::Settings => {
+                    p.with_rrect_clip(body, 0.0, || {
+                        for (i, (row, r)) in settings::layout(scroll).into_iter().enumerate() {
+                            if r.y + r.h < HEADER_H || r.y > PANEL_H {
+                                continue;
+                            }
+                            draw_row(p, app, row, r, i == 0, hover == Some(row), capturing, &conflict, autostart);
+                        }
+                    });
+                    (scroll, settings::max_scroll(), settings::content_height())
                 }
-            });
+                Tab::Help => {
+                    let lines = help::lines(lang, &app.cfg.bindings, VERSION);
+                    p.with_rrect_clip(body, 0.0, || {
+                        for (line, r) in lines.iter().zip(help::layout(&lines, help_scroll)) {
+                            if r.y + r.h < HEADER_H || r.y > PANEL_H {
+                                continue;
+                            }
+                            draw_help_line(p, line, r);
+                        }
+                    });
+                    (help_scroll, help::max_scroll(&lines), help::content_height(&lines))
+                }
+            };
             // Indicateur de défilement.
-            let max = settings::max_scroll();
             if max > 0.0 {
                 let track_h = PANEL_H - HEADER_H - 24.0;
-                let thumb_h = (track_h * (PANEL_H - HEADER_H) / settings::content_height()).max(24.0);
-                let y = HEADER_H + 8.0 + (track_h - thumb_h) * (scroll / max);
+                let thumb_h = (track_h * (PANEL_H - HEADER_H) / content).max(24.0);
+                let y = HEADER_H + 8.0 + (track_h - thumb_h) * (position / max);
                 p.fill_rrect(RectF { x: PANEL_W - 9.0, y, w: 4.0, h: thumb_h }, 2.0, theme::LINE);
             }
-            // En-tête fixe.
-            p.text(
-                "Réglages",
-                Family::Body,
-                20.0,
-                700,
-                Align::Left,
-                RectF { x: PAD, y: 0.0, w: 200.0, h: HEADER_H },
-                theme::INK,
-            );
-            let c = close_rect();
-            if hover_close {
-                p.fill_rrect(c, c.h / 2.0, theme::HOVER);
-            }
-            let m = c.center();
-            p.line(Pt::new(m.x - 5.5, m.y - 5.5), Pt::new(m.x + 5.5, m.y + 5.5), theme::INK, 1.75, true);
-            p.line(Pt::new(m.x + 5.5, m.y - 5.5), Pt::new(m.x - 5.5, m.y + 5.5), theme::INK, 1.75, true);
-            p.line(Pt::new(0.0, HEADER_H - 0.5), Pt::new(PANEL_W, HEADER_H - 0.5), theme::LINE, 1.0, false);
+            draw_header(p, lang, tab, hover_header);
             let edge = RectF { x: 0.5, y: 0.5, w: PANEL_W - 1.0, h: PANEL_H - 1.0 };
             p.stroke_rrect(edge, theme::R_PANEL - 0.5, theme::LINE, 1.0);
         })
+    }
+}
+
+/// En-tête fixe : les deux onglets, le bouton de fermeture, et une zone libre pour déplacer le panneau.
+fn draw_header(p: &Painter, lang: Lang, tab: Tab, hover: Option<HeaderPart>) {
+    // Fond de l'en-tête : il masque le contenu qui défile dessous, en respectant les coins arrondis.
+    p.with_rrect_clip(RectF { x: 0.0, y: 0.0, w: PANEL_W, h: PANEL_H }, theme::R_PANEL, || {
+        p.fill_rrect(RectF { x: 0.0, y: 0.0, w: PANEL_W, h: HEADER_H }, 0.0, theme::BG);
+    });
+    let tabs = [(Tab::Settings, Text::Settings), (Tab::Help, Text::Help)];
+    for ((this, text), r) in tabs.into_iter().zip(settings::tab_rects()) {
+        let selected = this == tab;
+        if selected {
+            p.fill_rrect(r, r.h / 2.0, theme::INK);
+        } else if hover == Some(HeaderPart::Tab(this)) {
+            p.fill_rrect(r, r.h / 2.0, theme::HOVER);
+        }
+        let color = if selected { theme::WHITE } else { theme::INK };
+        p.text(t(lang, text), Family::Body, 15.0, 700, Align::Center, r, color);
+    }
+    let c = settings::close_rect();
+    if hover == Some(HeaderPart::Close) {
+        p.fill_rrect(c, c.h / 2.0, theme::HOVER);
+    }
+    let m = c.center();
+    p.line(Pt::new(m.x - 5.5, m.y - 5.5), Pt::new(m.x + 5.5, m.y + 5.5), theme::INK, 1.75, true);
+    p.line(Pt::new(m.x + 5.5, m.y - 5.5), Pt::new(m.x - 5.5, m.y + 5.5), theme::INK, 1.75, true);
+    p.line(Pt::new(0.0, HEADER_H - 0.5), Pt::new(PANEL_W, HEADER_H - 0.5), theme::LINE, 1.0, false);
+}
+
+fn draw_help_line(p: &Painter, line: &Line, r: RectF) {
+    match line {
+        Line::Title(text) => {
+            let upper = text.to_uppercase();
+            p.text(&upper, Family::Mono, 11.0, 600, Align::Left, RectF { y: r.y + 10.0, h: r.h - 10.0, ..r }, theme::BLUE);
+        }
+        Line::Text(text) => p.text(text, Family::Body, 13.0, 400, Align::Left, r, theme::MUTED),
+        Line::Credit(text) => {
+            let weight = if text.starts_with("Ekspointer") { 700 } else { 500 };
+            p.text(text, Family::Body, 13.5, weight, Align::Center, r, theme::INK);
+        }
+        Line::Key(label, key) => {
+            p.text(label, Family::Body, 13.0, 500, Align::Left, r, theme::INK);
+            let w = p.gfx.text_width(key, Family::Mono, 11.0, 600) + 20.0;
+            let pill = RectF { x: r.x + r.w - w, y: r.y + 3.0, w, h: r.h - 6.0 };
+            p.fill_rrect(pill, pill.h / 2.0, SURFACE);
+            p.text(key, Family::Mono, 11.0, 600, Align::Center, pill, theme::INK);
+        }
+        Line::Gap => {}
     }
 }
 
@@ -286,22 +399,29 @@ fn draw_slider(p: &Painter, row: RectF, value: i32, min: i32, max: i32, text: &s
     p.text(text, Family::Mono, 12.0, 500, Align::Right, value_rect, theme::MUTED);
 }
 
+/// Segment sélectionné d'un contrôle à plusieurs positions.
+fn draw_selected_segment(p: &Painter, s: RectF) {
+    p.fill_rrect(RectF { x: s.x + 2.0, y: s.y + 2.0, w: s.w - 4.0, h: s.h - 4.0 }, (s.h - 4.0) / 2.0, theme::INK);
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_row(
     p: &Painter,
     app: &App,
     row: Row,
     r: RectF,
+    first: bool,
     hover: bool,
     capturing: Option<(Action, bool)>,
     conflict: &Option<(Action, String, u64)>,
     autostart: bool,
 ) {
-    if let Row::Header(title) = row {
-        let text = title.to_uppercase();
+    let lang = app.cfg.language;
+    if matches!(row, Row::Header(_)) {
+        let text = row.label_in(lang).to_uppercase();
         p.text(&text, Family::Mono, 11.0, 600, Align::Left, RectF { x: r.x, y: r.y + 14.0, w: r.w, h: r.h - 14.0 }, theme::BLUE);
         // Filet au-dessus de chaque section, sauf la première, déjà sous l'en-tête du panneau.
-        if title != "Dessin" {
+        if !first {
             p.line(Pt::new(r.x, r.y + 8.5), Pt::new(r.x + r.w, r.y + 8.5), theme::LINE, 1.0, false);
         }
         return;
@@ -310,7 +430,7 @@ fn draw_row(
         let b = reset_rect(r);
         p.fill_rrect(b, b.h / 2.0, if hover { theme::HOVER } else { theme::BG });
         p.stroke_rrect(RectF { x: b.x + 0.75, y: b.y + 0.75, w: b.w - 1.5, h: b.h - 1.5 }, b.h / 2.0, theme::LINE, 1.5);
-        p.text(row.label(), Family::Body, 13.0, 600, Align::Center, b, theme::INK);
+        p.text(row.label_in(lang), Family::Body, 13.0, 600, Align::Center, b, theme::INK);
         return;
     }
 
@@ -322,13 +442,28 @@ fn draw_row(
     };
     match warning {
         Some(message) => p.text(message, Family::Body, 12.0, 500, Align::Left, RectF { w: r.w - 112.0, ..r }, WARN),
-        None => p.text(row.label(), Family::Body, 14.0, 500, Align::Left, RectF { w: label_w.max(120.0) + 80.0, ..r }, theme::INK),
+        None => {
+            p.text(row.label_in(lang), Family::Body, 14.0, 500, Align::Left, RectF { w: label_w.max(120.0) + 80.0, ..r }, theme::INK)
+        }
     }
 
     match row {
+        Row::Language => {
+            let c = language_rect(r);
+            p.fill_rrect(c, c.h / 2.0, SURFACE);
+            for (i, choice) in Lang::all().into_iter().enumerate() {
+                let s = settings::segment_rect(c, 2, i);
+                let selected = choice == lang;
+                if selected {
+                    draw_selected_segment(p, s);
+                }
+                let color = if selected { theme::WHITE } else { theme::INK };
+                p.text(choice.name(), Family::Body, 12.5, 600, Align::Center, s, color);
+            }
+        }
         Row::HoldSeconds => {
             let v = app.cfg.hold_seconds as i32;
-            draw_slider(p, r, v, 2, 15, &format!("{v} s"));
+            draw_slider(p, r, v, 1, 15, &format!("{v} s"));
         }
         Row::HaloSize => {
             let v = app.cfg.halo_size as i32;
@@ -341,7 +476,7 @@ fn draw_row(
                 let s = settings::segment_rect(c, 3, i);
                 let selected = app.cfg.width as usize == i;
                 if selected {
-                    p.fill_rrect(RectF { x: s.x + 2.0, y: s.y + 2.0, w: s.w - 4.0, h: s.h - 4.0 }, (s.h - 4.0) / 2.0, theme::INK);
+                    draw_selected_segment(p, s);
                 }
                 let m = s.center();
                 let color = if selected { theme::WHITE } else { theme::INK };
@@ -358,23 +493,23 @@ fn draw_row(
             if let Some(m) = mode {
                 let double = active.map(|(_, d)| d).unwrap_or(shortcut.double);
                 p.fill_rrect(m, m.h / 2.0, SURFACE);
-                for (i, text) in ["Touches", "2×"].iter().enumerate() {
+                for (i, text) in [t(lang, Text::ModeKeys), "2×"].iter().enumerate() {
                     let s = settings::segment_rect(m, 2, i);
                     let selected = (i == 1) == double;
                     if selected {
-                        p.fill_rrect(RectF { x: s.x + 2.0, y: s.y + 2.0, w: s.w - 4.0, h: s.h - 4.0 }, (s.h - 4.0) / 2.0, theme::INK);
+                        draw_selected_segment(p, s);
                     }
                     let color = if selected { theme::WHITE } else { theme::MUTED };
                     p.text(text, Family::Mono, 10.0, 600, Align::Center, s, color);
                 }
             }
             p.fill_rrect(pill, pill.h / 2.0, if hover || active.is_some() { theme::HOVER } else { SURFACE });
-            if active.is_some() {
+            if let Some((_, double)) = active {
                 p.stroke_rrect(RectF { x: pill.x + 0.75, y: pill.y + 0.75, w: pill.w - 1.5, h: pill.h - 1.5 }, pill.h / 2.0, theme::BLUE, 1.5);
-                let prompt = if active.is_some_and(|(_, d)| d) { "Tapez la touche" } else { "Tapez…" };
+                let prompt = t(lang, if double { Text::TypeKey } else { Text::TypeShortcut });
                 p.text(prompt, Family::Body, 11.0, 600, Align::Center, pill, theme::BLUE);
             } else {
-                p.text(&shortcut.to_string(), Family::Mono, 11.5, 600, Align::Center, pill, theme::INK);
+                p.text(&shortcut.display(lang), Family::Mono, 11.5, 600, Align::Center, pill, theme::INK);
             }
         }
         Row::Header(_) | Row::ResetBindings => {}

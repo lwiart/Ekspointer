@@ -1,6 +1,7 @@
 //! Panneau de réglages : lignes, disposition et calculs des contrôles. Pur, en pixels logiques.
 
 use crate::geom::{Pt, RectF};
+use crate::i18n::Lang;
 use crate::shortcuts::{Action, Shortcut};
 
 /// Largeur du panneau.
@@ -23,6 +24,8 @@ pub const CONTROL_W: f32 = 170.0;
 /// Ligne du panneau de réglages.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Row {
+    /// Choix de la langue : premier réglage du panneau.
+    Language,
     Header(&'static str),
     HoldSeconds,
     Width,
@@ -38,6 +41,7 @@ impl Row {
     /// Libellé affiché à gauche de la ligne.
     pub fn label(self) -> &'static str {
         match self {
+            Row::Language => "Langue",
             Row::Header(title) => title,
             Row::HoldSeconds => "Durée avant effacement",
             Row::Width => "Épaisseur du trait",
@@ -47,6 +51,29 @@ impl Row {
             Row::ResetBindings => "Rétablir les raccourcis par défaut",
             Row::Autostart => "Lancer au démarrage de Windows",
             Row::HideFromCapture => "Masquer la barre du partage d'écran",
+        }
+    }
+
+    /// Libellé dans une langue.
+    pub fn label_in(self, lang: Lang) -> &'static str {
+        if lang == Lang::Fr {
+            return self.label();
+        }
+        match self {
+            Row::Language => "Language",
+            Row::Header("Dessin") => "Drawing",
+            Row::Header("Pointeur") => "Pointer",
+            Row::Header("Raccourcis") => "Shortcuts",
+            Row::Header("Général") => "General",
+            Row::Header(title) => title,
+            Row::HoldSeconds => "Time before fade-out",
+            Row::Width => "Stroke thickness",
+            Row::HaloSize => "Halo size",
+            Row::HaloFollowsColor => "Halo uses the drawing color",
+            Row::Binding(action) => action.label_in(lang),
+            Row::ResetBindings => "Restore default shortcuts",
+            Row::Autostart => "Start with Windows",
+            Row::HideFromCapture => "Hide toolbar from screen sharing",
         }
     }
 
@@ -63,6 +90,10 @@ impl Row {
 /// Lignes du panneau, dans l'ordre d'affichage.
 pub fn rows() -> Vec<Row> {
     let mut rows = vec![
+        Row::Header("Général"),
+        Row::Language,
+        Row::Autostart,
+        Row::HideFromCapture,
         Row::Header("Dessin"),
         Row::HoldSeconds,
         Row::Width,
@@ -72,7 +103,7 @@ pub fn rows() -> Vec<Row> {
         Row::Header("Raccourcis"),
     ];
     rows.extend(Action::all().into_iter().map(Row::Binding));
-    rows.extend([Row::ResetBindings, Row::Header("Général"), Row::Autostart, Row::HideFromCapture]);
+    rows.push(Row::ResetBindings);
     rows
 }
 
@@ -163,7 +194,61 @@ pub fn binding_parts(row: RectF, action: Action) -> (Option<RectF>, RectF) {
 
 /// Message affiché quand un raccourci est déjà pris.
 pub fn conflict_message(wanted: Shortcut, with: Action) -> String {
-    format!("« {wanted} » est déjà utilisé par « {} ».", with.label())
+    conflict_message_in(Lang::Fr, wanted, with)
+}
+
+/// Message de conflit dans une langue.
+pub fn conflict_message_in(lang: Lang, wanted: Shortcut, with: Action) -> String {
+    let (shortcut, action) = (wanted.display(lang), with.label_in(lang));
+    match lang {
+        Lang::Fr => format!("« {shortcut} » est déjà utilisé par « {action} »."),
+        Lang::En => format!("\"{shortcut}\" is already used by \"{action}\"."),
+    }
+}
+
+/// Onglet du panneau.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub enum Tab {
+    #[default]
+    Settings,
+    Help,
+}
+
+/// Partie de l'en-tête du panneau.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum HeaderPart {
+    Tab(Tab),
+    Close,
+    /// Zone libre : sert à déplacer le panneau.
+    Drag,
+}
+
+/// Rectangles des deux onglets : Réglages, Aide.
+pub fn tab_rects() -> [RectF; 2] {
+    let y = (HEADER_H - 32.0) / 2.0;
+    [RectF { x: PAD - 6.0, y, w: 112.0, h: 32.0 }, RectF { x: PAD - 6.0 + 116.0, y, w: 84.0, h: 32.0 }]
+}
+
+/// Rectangle du bouton de fermeture.
+pub fn close_rect() -> RectF {
+    RectF { x: PANEL_W - PAD - 30.0, y: (HEADER_H - 32.0) / 2.0, w: 32.0, h: 32.0 }
+}
+
+/// Partie de l'en-tête sous un point, ou `None` hors de l'en-tête.
+pub fn header_hit(p: Pt) -> Option<HeaderPart> {
+    if p.x < 0.0 || p.x >= PANEL_W || p.y < 0.0 || p.y >= HEADER_H {
+        return None;
+    }
+    let [settings, help] = tab_rects();
+    Some(if settings.contains(p) {
+        HeaderPart::Tab(Tab::Settings)
+    } else if help.contains(p) {
+        HeaderPart::Tab(Tab::Help)
+    } else if close_rect().contains(p) {
+        HeaderPart::Close
+    } else {
+        HeaderPart::Drag
+    })
 }
 
 #[cfg(test)]
@@ -174,9 +259,9 @@ mod tests {
     fn rows_follow_spec_sections() {
         let r = rows();
         let headers: Vec<_> = r.iter().filter_map(|x| if let Row::Header(h) = x { Some(*h) } else { None }).collect();
-        assert_eq!(headers, vec!["Dessin", "Pointeur", "Raccourcis", "Général"]);
-        // 4 globaux + 6 outils + 6 couleurs + annuler + quitter
-        assert_eq!(r.iter().filter(|x| matches!(x, Row::Binding(_))).count(), 18);
+        assert_eq!(headers, vec!["Général", "Dessin", "Pointeur", "Raccourcis"]);
+        // 4 globaux + 6 outils + 10 couleurs + annuler + quitter
+        assert_eq!(r.iter().filter(|x| matches!(x, Row::Binding(_))).count(), 22);
         for row in [Row::HoldSeconds, Row::Width, Row::HaloSize, Row::HaloFollowsColor, Row::ResetBindings, Row::Autostart, Row::HideFromCapture] {
             assert!(r.contains(&row), "{row:?}");
         }
@@ -184,7 +269,12 @@ mod tests {
         assert!(pos(Row::HoldSeconds) < pos(Row::Header("Pointeur")));
         assert!(pos(Row::HaloSize) < pos(Row::Header("Raccourcis")));
         assert!(pos(Row::Binding(Action::ToggleDraw)) < pos(Row::ResetBindings));
-        assert!(pos(Row::ResetBindings) < pos(Row::Header("Général")));
+        // La section Général ouvre la page : langue, démarrage, masquage, dans cet ordre.
+        assert_eq!(
+            &r[..5],
+            &[Row::Header("Général"), Row::Language, Row::Autostart, Row::HideFromCapture, Row::Header("Dessin")]
+        );
+        assert_eq!(r.last(), Some(&Row::ResetBindings));
     }
 
     #[test]
@@ -239,7 +329,7 @@ mod tests {
         let l = layout(0.0);
         let hold = l.iter().find(|(r, _)| *r == Row::HoldSeconds).unwrap().1;
         assert_eq!(hit(0.0, Pt::new(hold.x + 5.0, hold.y + 5.0)), Some(Row::HoldSeconds));
-        let header = l[0].1;
+        let header = l.iter().find(|(r, _)| matches!(r, Row::Header(_))).unwrap().1;
         assert_eq!(hit(0.0, Pt::new(header.x + 5.0, header.y + 5.0)), None);
         // Une ligne défilée sous l'en-tête du panneau n'est pas cliquable.
         assert_eq!(hit(60.0, Pt::new(PAD + 5.0, HEADER_H - 5.0)), None);
@@ -289,5 +379,59 @@ mod tests {
         assert_eq!(pill.x + pill.w, row.x + row.w);
         assert!(pill.y >= row.y && pill.y + pill.h <= row.y + row.h);
         assert!(binding_parts(row, Action::ToolArrow).0.is_none());
+    }
+
+    #[test]
+    fn language_is_the_first_setting() {
+        // Première ligne de réglage, juste sous le titre de la section Général.
+        assert_eq!(rows()[1], Row::Language);
+        assert_eq!(Row::Language.label(), "Langue");
+        let first = layout(0.0)[1];
+        assert_eq!(first.0, Row::Language);
+        assert_eq!(hit(0.0, Pt::new(first.1.x + 5.0, first.1.y + 5.0)), Some(Row::Language));
+    }
+
+    #[test]
+    fn rows_are_translated() {
+        use crate::i18n::Lang;
+        assert_eq!(Row::Language.label_in(Lang::En), "Language");
+        assert_eq!(Row::HoldSeconds.label_in(Lang::En), "Time before fade-out");
+        assert_eq!(Row::Header("Dessin").label_in(Lang::En), "Drawing");
+        assert_eq!(Row::Header("Raccourcis").label_in(Lang::En), "Shortcuts");
+        assert_eq!(Row::Binding(Action::ToolArrow).label_in(Lang::En), "Arrow");
+        for row in rows() {
+            assert_eq!(row.label_in(Lang::Fr), row.label());
+            assert!(!row.label_in(Lang::En).is_empty(), "{row:?}");
+            if !matches!(row, Row::Binding(Action::ToolRect | Action::ToolEllipse)) {
+                assert_ne!(row.label_in(Lang::En), row.label(), "{row:?} n'est pas traduit");
+            }
+        }
+        assert_eq!(
+            conflict_message_in(Lang::En, "F".parse().unwrap(), Action::ToolArrow),
+            "\"F\" is already used by \"Arrow\"."
+        );
+        assert_eq!(
+            conflict_message_in(Lang::Fr, "F".parse().unwrap(), Action::ToolArrow),
+            conflict_message("F".parse().unwrap(), Action::ToolArrow)
+        );
+    }
+
+    #[test]
+    fn header_holds_two_tabs_a_close_button_and_a_drag_area() {
+        let [tab_settings, tab_help] = tab_rects();
+        let close = close_rect();
+        for r in [tab_settings, tab_help, close] {
+            assert!(r.x >= 0.0 && r.y >= 0.0 && r.x + r.w <= PANEL_W && r.y + r.h <= HEADER_H, "{r:?}");
+        }
+        assert!(tab_settings.x + tab_settings.w <= tab_help.x);
+        assert!(tab_help.x + tab_help.w < close.x);
+        // Le reste de l'en-tête sert à déplacer le panneau.
+        assert_eq!(header_hit(Pt::new(tab_settings.x + 4.0, tab_settings.y + 4.0)), Some(HeaderPart::Tab(Tab::Settings)));
+        assert_eq!(header_hit(Pt::new(tab_help.x + 4.0, tab_help.y + 4.0)), Some(HeaderPart::Tab(Tab::Help)));
+        assert_eq!(header_hit(Pt::new(close.x + 4.0, close.y + 4.0)), Some(HeaderPart::Close));
+        let gap = Pt::new((tab_help.x + tab_help.w + close.x) / 2.0, HEADER_H / 2.0);
+        assert_eq!(header_hit(gap), Some(HeaderPart::Drag));
+        assert_eq!(header_hit(Pt::new(4.0, 4.0)), Some(HeaderPart::Drag));
+        assert_eq!(header_hit(Pt::new(50.0, HEADER_H + 5.0)), None); // sous l'en-tête
     }
 }

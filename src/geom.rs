@@ -64,15 +64,28 @@ impl Rgba {
     }
 }
 
-/// Couleurs de dessin, dans l'ordre des touches 1 à 6.
-pub const PALETTE: [Rgba; 6] = [
-    Rgba::hex(0xF0631F), // ambre
-    Rgba::hex(0x0C659D), // bleu Eksplodo
-    Rgba::hex(0x003C58), // encre
+/// Couleurs de dessin, dans l'ordre des touches 1 à 9 puis 0 : les couleurs franches d'abord
+/// (jaune par défaut), puis les autres.
+pub const PALETTE: [Rgba; 10] = [
     Rgba::hex(0xFFC400), // jaune
+    Rgba::hex(0xE5252A), // rouge
     Rgba::hex(0x1FA971), // vert
+    Rgba::hex(0x0C659D), // bleu
+    Rgba::hex(0x101418), // noir
     Rgba::hex(0xFFFFFF), // blanc
+    Rgba::hex(0xF0631F), // ambre Eksplodo
+    Rgba::hex(0x003C58), // encre Eksplodo
+    Rgba::hex(0x8B3FD9), // violet
+    Rgba::hex(0xF0489B), // rose
 ];
+
+/// Indice du blanc dans la palette : il reçoit un liseré foncé au lieu d'un liseré clair.
+pub const WHITE_INDEX: u8 = 5;
+
+/// Vrai pour une couleur claire (jaune, blanc) : le texte posé dessus doit être foncé.
+pub fn is_light(color: u8) -> bool {
+    matches!(color, 0 | 5)
+}
 
 /// Épaisseurs de trait, en pixels logiques.
 pub const WIDTHS: [f32; 3] = [3.0, 5.0, 8.0];
@@ -92,12 +105,22 @@ mod tests {
 
     #[test]
     fn palette_order_matches_spec() {
-        assert_eq!(PALETTE[0], Rgba::hex(0xF0631F));
-        assert_eq!(PALETTE[1], Rgba::hex(0x0C659D));
-        assert_eq!(PALETTE[2], Rgba::hex(0x003C58));
-        assert_eq!(PALETTE[3], Rgba::hex(0xFFC400));
-        assert_eq!(PALETTE[4], Rgba::hex(0x1FA971));
+        // Les couleurs franches d'abord : jaune, rouge, vert, bleu, noir, blanc.
+        assert_eq!(PALETTE[0], Rgba::hex(0xFFC400));
+        assert_eq!(PALETTE[1], Rgba::hex(0xE5252A));
+        assert_eq!(PALETTE[2], Rgba::hex(0x1FA971));
+        assert_eq!(PALETTE[3], Rgba::hex(0x0C659D));
+        assert_eq!(PALETTE[4], Rgba::hex(0x101418));
         assert_eq!(PALETTE[5], Rgba::hex(0xFFFFFF));
+        // Puis les autres : ambre et encre Eksplodo, violet, rose.
+        assert_eq!(PALETTE[6], Rgba::hex(0xF0631F));
+        assert_eq!(PALETTE[7], Rgba::hex(0x003C58));
+        assert_eq!(PALETTE[8], Rgba::hex(0x8B3FD9));
+        assert_eq!(PALETTE[9], Rgba::hex(0xF0489B));
+        assert_eq!(PALETTE.len(), 10);
+        // Couleurs claires : le texte posé dessus est foncé.
+        let light: Vec<usize> = (0..PALETTE.len()).filter(|i| is_light(*i as u8)).collect();
+        assert_eq!(light, vec![0, 5]);
         assert_eq!(WIDTHS, [3.0, 5.0, 8.0]);
     }
 

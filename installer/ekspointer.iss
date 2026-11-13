@@ -9,6 +9,8 @@
 #endif
 
 [Setup]
+; La langue de l'assistant suit celle de Windows (français, sinon anglais), sans poser la question.
+ShowLanguageDialog=no
 ; Ne jamais changer AppId : c'est lui qui permet les mises à jour.
 AppId={{D98EDD00-716E-497D-A73D-636807B092EF}
 AppName=Ekspointer
@@ -38,10 +40,21 @@ ArchitecturesInstallIn64BitMode=x64compatible
 
 [Languages]
 Name: "french"; MessagesFile: "compiler:Languages\French.isl"
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[CustomMessages]
+french.DesktopIcon=Créer un raccourci sur le Bureau
+english.DesktopIcon=Create a desktop shortcut
+french.AutoStart=Lancer Ekspointer au démarrage de Windows
+english.AutoStart=Start Ekspointer with Windows
+french.LaunchApp=Lancer Ekspointer
+english.LaunchApp=Launch Ekspointer
+french.DeleteSettings=Voulez-vous aussi supprimer vos réglages Ekspointer ?
+english.DeleteSettings=Do you also want to delete your Ekspointer settings?
 
 [Tasks]
-Name: "desktopicon"; Description: "Créer un raccourci sur le Bureau"; Flags: unchecked
-Name: "autostart"; Description: "Lancer Ekspointer au démarrage de Windows"; Flags: unchecked
+Name: "desktopicon"; Description: "{cm:DesktopIcon}"; Flags: unchecked
+Name: "autostart"; Description: "{cm:AutoStart}"; Flags: unchecked
 
 [Files]
 Source: "{#ExePath}"; DestDir: "{app}"; DestName: "ekspointer.exe"; Flags: ignoreversion
@@ -54,7 +67,7 @@ Name: "{userdesktop}\Ekspointer"; Filename: "{app}\ekspointer.exe"; Tasks: deskt
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Ekspointer"; ValueData: """{app}\ekspointer.exe"""; Tasks: autostart
 
 [Run]
-Filename: "{app}\ekspointer.exe"; Description: "Lancer Ekspointer"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\ekspointer.exe"; Description: "{cm:LaunchApp}"; Flags: nowait postinstall skipifsilent
 
 [Code]
 // Demande à l'instance en cours de se fermer et attend jusqu'à 3 secondes qu'elle l'ait fait.
@@ -96,7 +109,7 @@ begin
   Dir := ExpandConstant('{app}');
   if FileExists(Dir + '\config.json') or FileExists(Dir + '\config.invalide.json') or FileExists(Dir + '\ekspointer.log') then
   begin
-    if SuppressibleMsgBox('Voulez-vous aussi supprimer vos réglages Ekspointer ?', mbConfirmation, MB_YESNO or MB_DEFBUTTON2, IDNO) = IDYES then
+    if SuppressibleMsgBox(CustomMessage('DeleteSettings'), mbConfirmation, MB_YESNO or MB_DEFBUTTON2, IDNO) = IDYES then
     begin
       DeleteFile(Dir + '\config.json');
       DeleteFile(Dir + '\config.invalide.json');

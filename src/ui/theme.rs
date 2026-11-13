@@ -10,6 +10,8 @@ pub const HOVER: Rgba = Rgba::hex(0xE3F1F7);
 pub const BLUE: Rgba = Rgba::hex(0x0C659D);
 pub const EMBER: Rgba = Rgba::hex(0xF0631F);
 pub const WHITE: Rgba = Rgba::hex(0xFFFFFF);
+/// Jaune fluo du halo quand il ne suit pas la couleur de dessin.
+pub const HALO_FLUO: Rgba = Rgba::hex(0xE6FF00);
 
 /// Hauteur de la barre d'outils, en pixels logiques.
 pub const BAR_H: f32 = 56.0;

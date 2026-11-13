@@ -88,7 +88,7 @@ Rayons : pastille complète pour tout ce qui est interactif, 18 px pour le panne
 
 Fenêtre de 420 × 560 px logiques, rayon 18 px, ouverte depuis la barre ou la zone de notification. Sections :
 
-- **Dessin** : durée avant effacement (2 à 15 s, par pas de 1 s), épaisseur par défaut.
+- **Dessin** : durée avant effacement (1 à 15 s, par pas de 1 s), épaisseur par défaut.
 - **Pointeur** : taille du halo (40 à 120 px), couleur du halo liée ou non à la couleur de dessin.
 - **Raccourcis** : une ligne par action. On clique sur la ligne, on tape la combinaison, elle est enregistrée. Échap annule la saisie. Pour les raccourcis globaux (bascule du dessin, tout effacer, halo), un sélecteur à deux positions choisit le type : « Combinaison » ou « Double appui » ; en double appui, on tape une seule touche et la ligne affiche `2×Touche`. Une combinaison déjà utilisée par une autre action est refusée, avec un message qui nomme l'action en conflit. Un bouton rétablit les raccourcis par défaut.
 - **Général** : lancer au démarrage de Windows, masquer la barre d'outils du partage d'écran.
@@ -133,7 +133,7 @@ Raccourcis actifs seulement en mode dessin (ils sont interceptés et n'atteignen
 | Action | Raccourci |
 |---|---|
 | Flèche, Rectangle, Cercle, Trait libre, Surligneur, Numéros | `F`, `R`, `C`, `D`, `S`, `N` |
-| Couleurs 1 à 6 | `1` à `6` (rangée du haut et pavé numérique) |
+| Couleurs 1 à 10 | `1` à `9`, puis `0` (rangée du haut et pavé numérique) |
 | Annuler la dernière forme | `Ctrl+Z` |
 | Quitter le mode dessin | `Échap` |
 
@@ -164,7 +164,7 @@ Une forme de moins de 12 px (flèche, rectangle, ellipse) est abandonnée au rel
 
 Épaisseurs : 3, 5 et 8 px. Elles s'appliquent à la flèche, au rectangle, à l'ellipse et au trait libre.
 
-Couleurs, dans l'ordre des touches 1 à 6 : ambre `#F0631F` (par défaut), bleu `#0C659D`, encre `#003C58`, jaune `#FFC400`, vert `#1FA971`, blanc `#FFFFFF`.
+Couleurs, dans l'ordre des touches 1 à 9 puis 0 : jaune `#FFC400` (par défaut), rouge `#E5252A`, vert `#1FA971`, bleu `#0C659D`, noir `#101418`, blanc `#FFFFFF`, puis ambre `#F0631F`, encre `#003C58`, violet `#8B3FD9`, rose `#F0489B`.
 
 Lisibilité sur tout fond : chaque forme, sauf le surligneur, porte un liseré blanc de 1,5 px à 85 % d'opacité et une ombre douce teintée encre. Les formes blanches portent un liseré encre.
 
@@ -184,24 +184,24 @@ Pour une flèche de longueur `L` et d'épaisseur `w` :
 
 1. **Tracé** : la forme suit la souris.
 2. **Apparition** : au relâchement, finition en 150 ms (la tête de flèche s'ouvre, la pastille de numéro grossit de 80 % à 100 %).
-3. **Maintien** : pendant la durée réglée (5 s par défaut), comptée depuis le relâchement.
+3. **Maintien** : pendant la durée réglée (1 s par défaut, de 1 à 15 s), comptée depuis le relâchement.
 4. **Fondu** : opacité de 100 % à 0 % en 600 ms, puis la forme est supprimée.
 
 Épingler suspend le passage au fondu pour toutes les formes, présentes et à venir. Désépingler relance la durée de maintien de chaque forme à partir de cet instant. « Tout effacer » fait disparaître toutes les formes en 200 ms. `Ctrl+Z` supprime la forme la plus récente encore visible.
 
 ### 5.6 Effets de pointeur
 
-- **Halo** : disque de 64 px par défaut, couleur courante à 35 % d'opacité, bord adouci, centré sur le curseur. Il suit le curseur sur tous les écrans.
+- **Halo** : disque de 64 px par défaut, couleur courante (ou jaune fluo `#E6FF00` si l'option « Halo de la couleur du dessin » est désactivée) à 35 % d'opacité, bord adouci, centré sur le curseur. Il suit le curseur sur tous les écrans.
 - **Onde au clic** : anneau qui s'élargit de 8 à 48 px de rayon et s'efface en 450 ms. Clic gauche : un anneau de la couleur courante. Clic droit : deux anneaux concentriques bleus `#0C659D`.
 - **Traînée laser** : le curseur laisse une traînée ambre couvrant ses 700 dernières millisecondes, qui s'amincit et s'efface vers l'arrière, avec une lueur.
 
-Les trois sont indépendants et fonctionnent dans tous les modes. Leur état est mémorisé.
+Les trois sont indépendants et fonctionnent dans tous les modes. Leur état est mémorisé. Au premier lancement, le halo et l'onde au clic sont actifs, la traînée ne l'est pas.
 
 ### 5.7 Partage d'écran
 
 Les formes et les effets de pointeur sont visibles par les apprenants quand l'écran entier est partagé. Ils ne le sont pas si seule une fenêtre ou un onglet est partagé : c'est une limite du partage de fenêtre, pas d'Ekspointer.
 
-Option « Masquer la barre d'outils du partage d'écran », activée par défaut : la barre, les volets et le panneau de réglages sont exclus de la capture (`SetWindowDisplayAffinity`), les apprenants ne voient que les annotations. Ce masquage exige Windows 10 version 2004 ou plus récent ; sur une version plus ancienne, la barre reste visible dans le partage et l'échec est noté dans le journal.
+Option « Masquer la barre d'outils du partage d'écran », désactivée par défaut (la barre est donc visible des apprenants) ; une fois activée : la barre, les volets et le panneau de réglages sont exclus de la capture (`SetWindowDisplayAffinity`), les apprenants ne voient que les annotations. Ce masquage exige Windows 10 version 2004 ou plus récent ; sur une version plus ancienne, la barre reste visible dans le partage et l'échec est noté dans le journal.
 
 ## 6. Architecture
 
@@ -273,6 +273,8 @@ Contenu : version du format, durée d'effacement, épaisseur, couleur courante, 
 
 Écriture atomique : fichier temporaire puis renommage.
 
+Valeurs par défaut modifiées à la demande de l'utilisateur le 13/11/2026 (version 0.1.1, format de réglages 2) : effacement après 1 s au lieu de 5, halo et onde au clic actifs, barre visible dans le partage d'écran. Un fichier de réglages de la version 0.1.0 (format 1) prend ces quatre nouvelles valeurs à sa première lecture ; ses autres réglages sont conservés.
+
 ### 6.5 Divers
 
 - **Instance unique** : un mutex nommé. Un second lancement affiche la barre de l'instance en cours puis se termine.
@@ -326,3 +328,17 @@ Vérification manuelle, application lancée, avec captures d'écran :
 - Visibilité des annotations dans un partage d'écran entier Google Meet, barre masquée.
 - Installation, mise à jour, désinstallation.
 - Mesures : taille de l'exécutable, mémoire, processeur au repos.
+
+## 10. Évolutions de la version 0.2.0 (demandes de l'utilisateur, 13/11/2026)
+
+Ces points remplacent ce que les sections précédentes en disaient.
+
+- **Valeurs par défaut** : effacement après 1 s (réglable de 1 à 15 s), halo et onde au clic actifs, barre visible dans le partage d'écran, couleur jaune.
+- **Palette de dix couleurs** : jaune, rouge, vert, bleu, noir, blanc, puis ambre, encre, violet, rose. Touches `1` à `9` puis `0`. Les couleurs d'un fichier de réglages de la version 0.1.0 sont converties vers la même teinte.
+- **Halo** : quand l'option « Halo de la couleur du dessin » est désactivée, le halo est jaune fluo `#E6FF00`.
+- **Langue** : interface en français ou en anglais. Au premier lancement, elle suit la langue de Windows (français, sinon anglais). Le fichier de réglages garde les raccourcis sous leur forme française quelle que soit la langue ; les deux formes se relisent.
+- **Panneau de réglages** : deux onglets, « Réglages » et « Aide ». La section Général ouvre la page, dans cet ordre : Langue, Lancer au démarrage de Windows, Masquer la barre du partage d'écran. Viennent ensuite Dessin, Pointeur, Raccourcis. Le panneau se déplace en le glissant par son en-tête.
+- **Page d'aide** : mode d'emploi court, raccourcis actuels, et crédits (Laurent Wiart, Eksplodo, eksplodo.fr). Elle s'ouvre aussi depuis le menu de la zone de notification.
+- **Barre d'outils** : elle se déplace en la glissant par n'importe quel endroit qui n'est pas un bouton (logo, filets, marges, espaces). Pendant le déplacement elle est réduite de moitié, le point saisi restant sous le curseur ; elle reprend sa taille au relâchement.
+- **Bouton à l'épingle** : sa bulle dit « Garder les tracés à l'écran ».
+- **Installateur** : en français ou en anglais, selon la langue de Windows.

@@ -1,7 +1,8 @@
 //! Icône de la zone de notification, son menu et les notifications.
 
 use super::WM_APP_TRAY;
-use windows::core::{w, Result, PCWSTR};
+use ekspointer::i18n::{t, Lang, Text};
+use windows::core::{Result, PCWSTR};
 use windows::Win32::Foundation::{HWND, POINT};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Shell::*;
@@ -18,12 +19,18 @@ pub enum TrayCommand {
     Recreate,
     ToggleToolbar,
     Settings,
+    Help,
     Quit,
 }
 
 const ID_TOGGLE: usize = 1;
 const ID_SETTINGS: usize = 2;
 const ID_QUIT: usize = 3;
+const ID_HELP: usize = 4;
+
+fn wide(text: &str) -> Vec<u16> {
+    text.encode_utf16().chain(Some(0)).collect()
+}
 
 fn copy_into(dst: &mut [u16], text: &str) {
     let wide: Vec<u16> = text.encode_utf16().collect();
@@ -89,14 +96,21 @@ impl Tray {
     }
 
     /// Ouvre le menu au curseur et renvoie la commande choisie.
-    pub fn menu(&self, toolbar_visible: bool) -> Option<TrayCommand> {
+    pub fn menu(&self, toolbar_visible: bool, lang: Lang) -> Option<TrayCommand> {
         unsafe {
             let menu = CreatePopupMenu().ok()?;
-            let toggle = if toolbar_visible { w!("Masquer la barre") } else { w!("Afficher la barre") };
-            let _ = AppendMenuW(menu, MF_STRING, ID_TOGGLE, toggle);
-            let _ = AppendMenuW(menu, MF_STRING, ID_SETTINGS, w!("Réglages"));
+            let items = [
+                (ID_TOGGLE, t(lang, if toolbar_visible { Text::TrayHide } else { Text::TrayShow })),
+                (ID_SETTINGS, t(lang, Text::Settings)),
+                (ID_HELP, t(lang, Text::Help)),
+            ];
+            for (id, text) in items {
+                let text = wide(text);
+                let _ = AppendMenuW(menu, MF_STRING, id, PCWSTR(text.as_ptr()));
+            }
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-            let _ = AppendMenuW(menu, MF_STRING, ID_QUIT, w!("Quitter"));
+            let quit = wide(t(lang, Text::TrayQuit));
+            let _ = AppendMenuW(menu, MF_STRING, ID_QUIT, PCWSTR(quit.as_ptr()));
             let mut p = POINT::default();
             let _ = GetCursorPos(&mut p);
             // Sans cela, le menu ne se referme pas quand on clique ailleurs.
@@ -106,6 +120,7 @@ impl Tray {
             match chosen.0 as usize {
                 ID_TOGGLE => Some(TrayCommand::ToggleToolbar),
                 ID_SETTINGS => Some(TrayCommand::Settings),
+                ID_HELP => Some(TrayCommand::Help),
                 ID_QUIT => Some(TrayCommand::Quit),
                 _ => None,
             }

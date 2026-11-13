@@ -79,6 +79,7 @@ fn hold_duration_change_applies_to_next_shape() {
 #[test]
 fn pin_keeps_shapes_until_unpinned() {
     let mut r = Rig::new();
+    r.command(UiCommand::SetHoldSeconds(5));
     r.command(UiCommand::TogglePin);
     r.command(UiCommand::SelectTool(Some(Tool::Arrow)));
     r.overlay_stroke(0., 0., 200., 0.);

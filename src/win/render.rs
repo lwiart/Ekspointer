@@ -2,7 +2,7 @@
 
 use super::gfx::{Align, Family, Painter};
 use ekspointer::app::App;
-use ekspointer::geom::{Pt, Rgba, PALETTE};
+use ekspointer::geom::{is_light, Pt, Rgba, PALETTE, WHITE_INDEX};
 use ekspointer::pointer::{Button, Pointer};
 use ekspointer::shapes::arrow::{arrow_geom, arrow_outline};
 use ekspointer::shapes::stroke::catmull_rom_beziers;
@@ -95,7 +95,7 @@ fn draw_shape(p: &Painter, app: &App, s: &Shape, origin: Pt, now: u64, animate: 
         _ => 1.0,
     };
     let color = PALETTE[s.color as usize % PALETTE.len()];
-    let is_white = s.color == 5;
+    let is_white = s.color == WHITE_INDEX;
 
     p.with_opacity(opacity, || {
         if matches!(s.kind, ShapeKind::Highlighter { .. }) {
@@ -115,7 +115,7 @@ fn draw_shape(p: &Painter, app: &App, s: &Shape, origin: Pt, now: u64, animate: 
             let k = s.scale;
             let c = shift(*at, origin, 0.0);
             let half = NUMBER_D / 2.0 * k;
-            let text_color = if s.color == 3 || is_white { theme::INK } else { theme::WHITE };
+            let text_color = if is_light(s.color) { theme::INK } else { theme::WHITE };
             let size = if *n >= 100 { 12.0 } else if *n >= 10 { 15.0 } else { 17.0 };
             p.text(
                 &n.to_string(),

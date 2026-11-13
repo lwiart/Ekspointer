@@ -880,4 +880,12 @@ mod tests {
         assert!(f.on_key(0xA0, false).events.is_empty()); // Maj droite toujours tenue
         assert!(has(&f.on_key(0xA1, false), InputEvent::Shift(false)));
     }
+
+    #[test]
+    fn digit_zero_selects_the_tenth_color() {
+        let mut f = f();
+        f.set_draw_mode(true);
+        assert!(has(&f.on_key(0x30, true), InputEvent::Action(Action::Color(9))));
+        assert!(has(&f.on_key(0x39, true), InputEvent::Action(Action::Color(8))));
+    }
 }

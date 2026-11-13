@@ -130,8 +130,11 @@ fn writes_config_next_to_executable_on_quit() {
     assert!(s.wait(first, SHUTDOWN).is_some());
 
     let config = json(&s.file("config.json"));
-    assert_eq!(config["version"], 1);
-    assert_eq!(config["hold_seconds"], 5);
+    assert_eq!(config["version"], 2);
+    assert_eq!(config["hold_seconds"], 1);
+    assert_eq!(config["halo_on"], true);
+    assert_eq!(config["ripple_on"], true);
+    assert_eq!(config["hide_from_capture"], false);
     assert_eq!(config["bindings"]["ToggleDraw"], "Ctrl+Alt+D");
     assert!(!s.file("config.json.tmp").exists());
     // Rien n'est écrit ailleurs que dans le dossier de l'exécutable.
@@ -166,7 +169,7 @@ fn invalid_config_is_backed_up_at_startup() {
     s.run(&["--quit"], QUICK);
     assert!(s.wait(first, SHUTDOWN).is_some());
     // Les réglages par défaut ont remplacé le fichier abîmé.
-    assert_eq!(json(&s.file("config.json"))["hold_seconds"], 5);
+    assert_eq!(json(&s.file("config.json"))["hold_seconds"], 1);
 }
 
 #[test]
@@ -216,14 +219,15 @@ fn global_shortcut_goes_through_the_real_keyboard_hook() {
         send_key(vk, down);
     }
     std::thread::sleep(Duration::from_millis(300));
-    assert_eq!(json(&s.file("config.json"))["halo_on"], true, "Ctrl+Alt+H n'a pas atteint l'application");
+    // Le halo est actif par défaut : le raccourci le coupe.
+    assert_eq!(json(&s.file("config.json"))["halo_on"], false, "Ctrl+Alt+H n'a pas atteint l'application");
 
-    // Un second appui l'éteint : l'écoute fonctionne toujours après une première interception.
+    // Un second appui le rallume : l'écoute fonctionne toujours après une première interception.
     for (vk, down) in [(0xA2, true), (0xA4, true), (0x48, true), (0x48, false), (0xA4, false), (0xA2, false)] {
         send_key(vk, down);
     }
     std::thread::sleep(Duration::from_millis(300));
-    assert_eq!(json(&s.file("config.json"))["halo_on"], false);
+    assert_eq!(json(&s.file("config.json"))["halo_on"], true);
 
     s.run(&["--quit"], QUICK);
     assert_eq!(s.wait(first, SHUTDOWN).expect("l'instance ne s'est pas fermée").code(), Some(0));

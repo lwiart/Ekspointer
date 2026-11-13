@@ -5,7 +5,8 @@ use crate::geom::{Pt, Rgba, PALETTE, WIDTHS};
 use crate::input_filter::InputEvent;
 use crate::pointer::Pointer;
 use crate::shapes::{Scene, Tool};
-use crate::shortcuts::{Action, BindError, Bindings, Shortcut};
+use crate::i18n::Lang;
+use crate::shortcuts::{Action, BindError, Bindings, Reason, Shortcut};
 use crate::ui::theme;
 
 /// Commande venue de l'interface (barre d'outils, réglages).
@@ -28,6 +29,7 @@ pub enum UiCommand {
     SetHideFromCapture(bool),
     SetToolbarPos(i32, i32),
     SetToolbarCollapsed(bool),
+    SetLanguage(Lang),
 }
 
 /// Ce que la couche Windows doit faire après une transition.
@@ -45,8 +47,8 @@ pub enum Effect {
     CaptureAffinityChanged,
     /// Le raccourci demandé est déjà pris par cette action.
     BindingConflict(Action),
-    /// Le raccourci demandé ne convient pas à l'action ; le texte explique pourquoi.
-    BindingRejected(&'static str),
+    /// Le raccourci demandé ne convient pas à l'action.
+    BindingRejected(Reason),
 }
 
 /// État complet de l'application.
@@ -83,12 +85,12 @@ impl App {
         }
     }
 
-    /// Couleur du halo : couleur de dessin, ou ambre si le halo ne la suit pas.
+    /// Couleur du halo : couleur de dessin, ou jaune fluo si le halo ne la suit pas.
     pub fn halo_color(&self) -> Rgba {
         if self.cfg.halo_follows_color {
             PALETTE[self.cfg.color as usize % PALETTE.len()]
         } else {
-            theme::EMBER
+            theme::HALO_FLUO
         }
     }
 
@@ -240,10 +242,10 @@ impl App {
             }
             UiCommand::SetHoldSeconds(s) => {
                 // Une valeur inchangée ne réécrit pas le fichier (glissement d'un curseur).
-                if s.clamp(2, 15) == self.cfg.hold_seconds {
+                if s.clamp(1, 15) == self.cfg.hold_seconds {
                     return Vec::new();
                 }
-                self.cfg.hold_seconds = s.clamp(2, 15);
+                self.cfg.hold_seconds = s.clamp(1, 15);
                 self.scene.set_hold_ms(self.cfg.hold_seconds as u64 * 1000);
                 saved
             }
@@ -274,6 +276,13 @@ impl App {
             UiCommand::SetToolbarPos(x, y) => {
                 self.cfg.toolbar_pos = Some((x, y));
                 vec![Effect::ConfigChanged]
+            }
+            UiCommand::SetLanguage(lang) => {
+                if lang == self.cfg.language {
+                    return Vec::new();
+                }
+                self.cfg.language = lang;
+                saved
             }
             UiCommand::SetToolbarCollapsed(on) => {
                 self.cfg.toolbar_collapsed = on;
@@ -433,15 +442,16 @@ mod tests {
         a.command(UiCommand::SetHaloSize(500), 0);
         assert_eq!(a.cfg.halo_size, 120);
         a.command(UiCommand::SetColor(42), 0);
-        assert_eq!(a.cfg.color, 5);
+        assert_eq!(a.cfg.color, 9);
         a.command(UiCommand::TogglePin, 0);
         assert!(a.cfg.pinned && a.scene.pinned());
+        // Le halo est actif par défaut.
         let e = a.command(UiCommand::ToggleHalo, 0);
-        assert!(a.cfg.halo_on && e.contains(&Effect::ConfigChanged));
+        assert!(!a.cfg.halo_on && e.contains(&Effect::ConfigChanged));
         let e = a.input(InputEvent::Action(Action::ToggleHalo), 0, &one);
-        assert!(!a.cfg.halo_on && e.contains(&Effect::UiChanged) && e.contains(&Effect::ConfigChanged));
-        let e = a.command(UiCommand::SetHideFromCapture(false), 0);
-        assert!(!a.cfg.hide_from_capture && e.contains(&Effect::CaptureAffinityChanged));
+        assert!(a.cfg.halo_on && e.contains(&Effect::UiChanged) && e.contains(&Effect::ConfigChanged));
+        let e = a.command(UiCommand::SetHideFromCapture(true), 0);
+        assert!(a.cfg.hide_from_capture && e.contains(&Effect::CaptureAffinityChanged));
         a.command(UiCommand::SetToolbarPos(300, 40), 0);
         a.command(UiCommand::SetToolbarCollapsed(true), 0);
         assert_eq!((a.cfg.toolbar_pos, a.cfg.toolbar_collapsed), (Some((300, 40)), true));
@@ -481,6 +491,7 @@ mod tests {
     #[test]
     fn pointer_events_feed_effects_only_when_enabled() {
         let mut a = app();
+        a.command(UiCommand::ToggleRipple, 0); // l'onde est active par défaut : on la coupe
         a.input(InputEvent::Click(Pt::new(1., 1.), Button::Left), 0, &one);
         assert!(a.pointer.ripples().is_empty());
         a.command(UiCommand::ToggleRipple, 0);
@@ -502,14 +513,16 @@ mod tests {
         a.command(UiCommand::SetColor(1), 0);
         assert_eq!(a.halo_color(), PALETTE[1]);
         a.command(UiCommand::SetHaloFollowsColor(false), 0);
-        assert_eq!(a.halo_color(), theme::EMBER);
+        // Halo détaché de la couleur de dessin : jaune fluo.
+        assert_eq!(a.halo_color(), theme::HALO_FLUO);
+        assert_eq!(theme::HALO_FLUO, crate::geom::Rgba::hex(0xE6FF00));
     }
 
     #[test]
     fn invalid_binding_is_rejected_with_a_reason() {
         let mut a = app();
         let e = a.command(UiCommand::SetBinding(Action::ClearAll, "E".parse().unwrap()), 0);
-        assert!(matches!(e.as_slice(), [Effect::BindingRejected(reason)] if !reason.is_empty()));
+        assert_eq!(e, vec![Effect::BindingRejected(crate::shortcuts::Reason::NeedsModifier)]);
         assert_eq!(a.cfg.bindings.get(Action::ClearAll).to_string(), "Ctrl+Alt+E");
         let e = a.command(UiCommand::SetBinding(Action::HoldDraw, "Ctrl+Alt+X".parse().unwrap()), 0);
         assert!(matches!(e.as_slice(), [Effect::BindingRejected(_)]));
@@ -519,12 +532,51 @@ mod tests {
     fn unchanged_setting_is_not_saved_again() {
         // Glisser un curseur sans changer de valeur ne doit pas réécrire le fichier à chaque mouvement.
         let mut a = app();
-        assert!(a.command(UiCommand::SetHoldSeconds(5), 0).is_empty());
+        assert!(a.command(UiCommand::SetHoldSeconds(1), 0).is_empty());
         assert!(a.command(UiCommand::SetHaloSize(64), 0).is_empty());
         assert!(a.command(UiCommand::SetWidth(1), 0).is_empty());
         assert!(a.command(UiCommand::SetColor(0), 0).is_empty());
         assert!(a.command(UiCommand::SetHoldSeconds(6), 0).contains(&Effect::ConfigChanged));
         assert!(a.command(UiCommand::SetHoldSeconds(99), 0).contains(&Effect::ConfigChanged));
         assert!(a.command(UiCommand::SetHoldSeconds(200), 0).is_empty()); // déjà à la borne
+    }
+
+    #[test]
+    fn new_defaults_fade_after_one_second_with_halo_and_ripple_on() {
+        let mut a = app();
+        assert_eq!(a.cfg.hold_seconds, 1);
+        assert!(a.cfg.halo_on && a.cfg.ripple_on && !a.cfg.hide_from_capture);
+        // Une onde apparaît au premier clic, sans rien régler.
+        a.input(InputEvent::Click(Pt::new(1., 1.), Button::Left), 0, &one);
+        assert_eq!(a.pointer.ripples().len(), 1);
+        // Une forme commence à s'effacer une seconde après le relâchement.
+        a.input(InputEvent::HoldStart, 0, &one);
+        a.input(InputEvent::StrokeBegin(Pt::new(0., 0.)), 0, &one);
+        a.input(InputEvent::StrokeMove(Pt::new(100., 0.)), 0, &one);
+        a.input(InputEvent::StrokeEnd, 0, &one);
+        let s = a.scene.shapes()[0].clone();
+        assert!(matches!(a.scene.phase(&s, 999), Phase::Holding));
+        assert!(matches!(a.scene.phase(&s, 1001), Phase::Fading(_)));
+    }
+
+    #[test]
+    fn duration_goes_down_to_one_second() {
+        let mut a = app();
+        a.command(UiCommand::SetHoldSeconds(8), 0);
+        a.command(UiCommand::SetHoldSeconds(1), 0);
+        assert_eq!(a.cfg.hold_seconds, 1);
+        a.command(UiCommand::SetHoldSeconds(8), 0);
+        a.command(UiCommand::SetHoldSeconds(0), 0);
+        assert_eq!(a.cfg.hold_seconds, 1); // zéro ramené à la borne
+    }
+
+    #[test]
+    fn language_can_be_changed() {
+        use crate::i18n::Lang;
+        let mut a = app();
+        let e = a.command(UiCommand::SetLanguage(Lang::En), 0);
+        assert_eq!(a.cfg.language, Lang::En);
+        assert!(e.contains(&Effect::ConfigChanged) && e.contains(&Effect::UiChanged));
+        assert!(a.command(UiCommand::SetLanguage(Lang::En), 0).is_empty());
     }
 }

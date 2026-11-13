@@ -6,7 +6,8 @@ Ekspointer met le pointeur de souris en évidence et permet de tracer des formes
 
 - Six outils : flèche, rectangle, ellipse, trait libre, surligneur, numéros d'étapes.
 - Trois effets de pointeur : halo coloré, onde au clic, traînée laser.
-- Six couleurs, trois épaisseurs, effacement automatique réglable de 2 à 15 secondes, épingle pour garder les formes.
+- Dix couleurs (jaune par défaut), trois épaisseurs, effacement automatique réglable de 1 à 15 secondes (1 seconde par défaut), bouton pour garder les tracés à l'écran.
+- Interface en français ou en anglais, avec une page d'aide intégrée.
 - Dessin sur tous les écrans branchés.
 - Un seul exécutable de moins de 1 Mo, écrit en Rust, sans dépendance à installer.
 
@@ -20,7 +21,7 @@ La version portable (`Ekspointer-x.y.z-portable.exe`) fonctionne sans installati
 
 ## Utilisation
 
-Une barre d'outils flottante apparaît en haut de l'écran. Glissez-la par son logo, double-cliquez sur le logo pour la replier.
+Une barre d'outils flottante apparaît en haut de l'écran. Glissez-la par son logo ou par n'importe quel espace entre les boutons (elle rétrécit le temps du déplacement) ; double-cliquez sur le logo pour la replier.
 
 Il y a deux façons de dessiner :
 
@@ -34,7 +35,7 @@ Il y a deux façons de dessiner :
 | Tout effacer | `Ctrl+Alt+E` |
 | Afficher le halo | `Ctrl+Alt+H` |
 | Flèche, Rectangle, Ellipse, Trait libre, Surligneur, Numéros | `F`, `R`, `C`, `D`, `S`, `N` (en mode dessin) |
-| Couleurs 1 à 6 | `1` à `6` (en mode dessin) |
+| Couleurs 1 à 10 | `1` à `9`, puis `0` (en mode dessin) |
 | Annuler la dernière forme | `Ctrl+Z` (en mode dessin) |
 | Contraindre (angle de 15°, carré, cercle, ligne droite) | `Maj` pendant le tracé |
 
@@ -42,11 +43,15 @@ Tous les raccourcis se changent dans les réglages. Les raccourcis globaux peuve
 
 Sur un clavier français, AltGr n'est jamais pris pour `Ctrl+Alt` : seules les touches Ctrl et Alt de gauche comptent.
 
+## Réglages et aide
+
+Le dernier bouton de la barre ouvre un panneau à deux onglets. « Réglages » commence par la langue (français ou anglais), le lancement au démarrage de Windows et le masquage de la barre au partage d'écran, puis le dessin, le pointeur et les raccourcis. « Aide » résume le mode d'emploi et les raccourcis en cours. Le panneau se déplace en le glissant par son en-tête.
+
 ## Partage d'écran
 
 Les formes et les effets sont visibles par vos interlocuteurs quand vous partagez **l'écran entier**. Si vous ne partagez qu'une fenêtre ou un onglet, l'outil de visio ne les transmet pas.
 
-Par défaut, la barre d'outils est masquée du partage d'écran : seuls les tracés sont transmis. Cela se change dans les réglages. Ce masquage demande Windows 10 version 2004 ou plus récent.
+Par défaut, la barre d'outils est visible dans le partage d'écran. L'option « Masquer la barre du partage d'écran » des réglages ne transmet que les tracés ; elle demande Windows 10 version 2004 ou plus récent.
 
 ## Compilation
 
@@ -70,3 +75,7 @@ L'icône et les images de l'installateur sont générées depuis `assets/logo.sv
 - `docs/superpowers/` : spec de design et plan d'implémentation.
 
 Les polices Instrument Sans et Noto Sans Mono sont embarquées sous licence OFL (`assets/fonts/`).
+
+## Crédits
+
+Ekspointer est conçu par Laurent Wiart, [Eksplodo](https://eksplodo.fr/) : formation et conseil en automatisation et IA.

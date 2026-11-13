@@ -23,8 +23,8 @@ fn toggle_draw_arrow_then_fade() {
     assert!(matches!(r.kind(0), ShapeKind::Arrow { .. }));
 
     assert!(r.advance(100)); // apparition
-    assert!(!r.advance(2000)); // maintien : aucune animation
-    r.advance(3000); // 5,1 s après le relâchement
+    assert!(!r.advance(500)); // maintien : aucune animation
+    r.advance(500); // 1,1 s après le relâchement : durée par défaut d'une seconde écoulée
     assert!(matches!(r.phase(0), Phase::Fading(_)));
     r.advance(700);
     assert_eq!(r.shape_count(), 0);

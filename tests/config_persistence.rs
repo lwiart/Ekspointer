@@ -40,7 +40,7 @@ fn state_survives_restart() {
     let mut r2 = Rig::with_config(cfg);
     assert_eq!(r2.app.cfg.color, 3);
     assert_eq!(r2.app.cfg.width, 2);
-    assert!(r2.app.cfg.halo_on);
+    assert!(!r2.app.cfg.halo_on); // actif par défaut, coupé avant l'enregistrement
     assert_eq!(r2.app.cfg.halo_size, 90);
     assert!(r2.app.scene.pinned());
     assert_eq!(r2.app.tool, Tool::Highlighter);
@@ -84,7 +84,7 @@ fn save_is_atomic() {
         std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
     assert_eq!(names, vec!["config.json".to_string()]);
     let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(json["version"], 1);
+    assert_eq!(json["version"], 2);
     assert_eq!(json["bindings"]["ToggleDraw"], "Ctrl+Alt+D");
 }
 
@@ -104,7 +104,7 @@ fn hand_edited_file_is_sanitized_before_use() {
     r.command(UiCommand::SelectTool(Some(Tool::Rect)));
     r.overlay_stroke(0., 0., 100., 100.);
     let s = &r.app.scene.shapes()[0];
-    assert_eq!((s.color, s.width), (5, 8.0));
-    r.advance(2100); // durée ramenée à 2 s
+    assert_eq!((s.color, s.width), (9, 8.0));
+    r.advance(1100); // durée ramenée à 1 s
     assert!(r.advance(1));
 }
