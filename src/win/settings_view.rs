@@ -27,6 +27,8 @@ pub enum SettingsAction {
     Capture { action: Action, double: bool },
     CancelCapture,
     Autostart(bool),
+    /// Ouvrir une adresse dans le navigateur.
+    OpenUrl(&'static str),
     Close,
 }
 
@@ -38,6 +40,8 @@ pub struct SettingsView {
     help_scroll: f32,
     hover: Option<Row>,
     hover_header: Option<HeaderPart>,
+    /// Le curseur survole le lien de la page d'aide.
+    hover_link: bool,
     /// Curseur en cours de glissement.
     dragging: Option<Row>,
     /// Déplacement du panneau en cours : écart entre le curseur et le coin du panneau.
@@ -84,6 +88,7 @@ impl SettingsView {
             help_scroll: 0.0,
             hover: None,
             hover_header: None,
+            hover_link: false,
             dragging: None,
             moving: None,
             capturing: None,
@@ -192,6 +197,7 @@ impl SettingsView {
                 } else {
                     self.hover_header = settings::header_hit(p);
                     self.hover = if self.tab == Tab::Settings { settings::hit(self.scroll, p) } else { None };
+                    self.hover_link = self.tab == Tab::Help && self.help_link(app, p).is_some();
                 }
             }
             PanelEvent::Down(p) => {
@@ -226,13 +232,20 @@ impl SettingsView {
                     Some(HeaderPart::Drag) => return out,
                     None => {}
                 }
-                if self.tab == Tab::Settings {
-                    self.click_row(p, app, &mut out);
+                match self.tab {
+                    Tab::Settings => self.click_row(p, app, &mut out),
+                    Tab::Help => out.extend(self.help_link(app, p).map(SettingsAction::OpenUrl)),
                 }
             }
             PanelEvent::DoubleClick(_) => {}
         }
         out
+    }
+
+    /// Adresse du lien de la page d'aide sous un point.
+    fn help_link(&self, app: &App, p: Pt) -> Option<&'static str> {
+        let lines = help::lines(app.cfg.language, &app.cfg.bindings, VERSION);
+        help::link_at(&lines, self.help_scroll, p)
     }
 
     fn click_row(&mut self, p: Pt, app: &App, out: &mut Vec<SettingsAction>) {
@@ -286,7 +299,7 @@ impl SettingsView {
         self.dirty = false;
         let lang = app.cfg.language;
         let (tab, scroll, help_scroll) = (self.tab, self.scroll, self.help_scroll);
-        let (hover, hover_header) = (self.hover, self.hover_header);
+        let (hover, hover_header, hover_link) = (self.hover, self.hover_header, self.hover_link);
         let capturing = self.capturing;
         let conflict = self.conflict.clone();
         let autostart = self.autostart;
@@ -312,7 +325,7 @@ impl SettingsView {
                             if r.y + r.h < HEADER_H || r.y > PANEL_H {
                                 continue;
                             }
-                            draw_help_line(p, line, r);
+                            draw_help_line(p, line, r, hover_link);
                         }
                     });
                     (help_scroll, help::max_scroll(&lines), help::content_height(&lines))
@@ -359,8 +372,20 @@ fn draw_header(p: &Painter, lang: Lang, tab: Tab, hover: Option<HeaderPart>) {
     p.line(Pt::new(0.0, HEADER_H - 0.5), Pt::new(PANEL_W, HEADER_H - 0.5), theme::LINE, 1.0, false);
 }
 
-fn draw_help_line(p: &Painter, line: &Line, r: RectF) {
+fn draw_help_line(p: &Painter, line: &Line, r: RectF, hover_link: bool) {
     match line {
+        Line::Link(label, _) => {
+            // Lien : bleu et souligné, sur un fond clair au survol.
+            let zone = help::link_rect(r);
+            let w = p.gfx.text_width(label, Family::Body, 13.5, 600);
+            if hover_link {
+                let pill = RectF { x: zone.x + (zone.w - w) / 2.0 - 12.0, y: zone.y + 1.0, w: w + 24.0, h: zone.h - 2.0 };
+                p.fill_rrect(pill, pill.h / 2.0, theme::HOVER);
+            }
+            p.text(label, Family::Body, 13.5, 600, Align::Center, zone, theme::BLUE);
+            let (x, y) = (zone.x + (zone.w - w) / 2.0, zone.y + zone.h / 2.0 + 9.0);
+            p.line(Pt::new(x, y), Pt::new(x + w, y), theme::BLUE, 1.0, false);
+        }
         Line::Title(text) => {
             let upper = text.to_uppercase();
             p.text(&upper, Family::Mono, 11.0, 600, Align::Left, RectF { y: r.y + 10.0, h: r.h - 10.0, ..r }, theme::BLUE);

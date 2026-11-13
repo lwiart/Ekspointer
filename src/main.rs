@@ -277,6 +277,7 @@ impl Shell {
                     self.settings.set_autostart(autostart::is_enabled());
                 }
                 SettingsAction::Close => self.close_settings(),
+                SettingsAction::OpenUrl(url) => open_url(url),
             }
         }
         self.settings.dirty = true;
@@ -612,6 +613,15 @@ fn demo_ui(shell: &mut Shell, name: &str) {
             }
         }
         _ => {}
+    }
+}
+
+/// Ouvre une adresse dans le navigateur par défaut.
+fn open_url(url: &str) {
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    let wide: Vec<u16> = url.encode_utf16().chain(Some(0)).collect();
+    unsafe {
+        ShellExecuteW(None, w!("open"), PCWSTR(wide.as_ptr()), None, None, SW_SHOWNORMAL);
     }
 }
 

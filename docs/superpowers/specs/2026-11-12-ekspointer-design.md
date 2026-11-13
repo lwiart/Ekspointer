@@ -343,3 +343,4 @@ Ces points remplacent ce que les sections précédentes en disaient.
 - **Bouton à l'épingle** : sa bulle dit « Garder les tracés à l'écran ».
 - **Installateur** : en français ou en anglais, selon la langue de Windows.
 - **Bouton Quitter** (version 0.2.1) : une croix au bout de la barre d'outils, séparée des autres boutons par un filet, ferme Ekspointer. Le menu de la zone de notification garde aussi son entrée « Quitter ».
+- **Lien vers le site** (version 0.2.2) : dans les crédits de la page d'aide, « eksplodo.fr » est un lien cliquable qui ouvre `https://eksplodo.fr/` dans le navigateur par défaut.

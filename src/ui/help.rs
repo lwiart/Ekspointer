@@ -1,6 +1,6 @@
 //! Page d'aide : mode d'emploi court et crédits. Pur, en pixels logiques.
 
-use crate::geom::RectF;
+use crate::geom::{Pt, RectF};
 use crate::i18n::Lang;
 use crate::shortcuts::{Action, Bindings};
 use crate::ui::settings::{HEADER_H, PAD, PANEL_H, PANEL_W};
@@ -11,6 +11,10 @@ pub const AUTHOR: &str = "Laurent Wiart";
 pub const COMPANY: &str = "Eksplodo";
 /// Site de la société.
 pub const SITE: &str = "eksplodo.fr";
+/// Adresse ouverte par le lien des crédits.
+pub const SITE_URL: &str = "https://eksplodo.fr/";
+/// Largeur de la zone cliquable d'un lien, centrée sur sa ligne.
+const LINK_W: f32 = 150.0;
 
 /// Ligne de la page d'aide.
 #[derive(Clone, PartialEq, Debug)]
@@ -21,6 +25,8 @@ pub enum Line {
     Key(String, String),
     /// Ligne de crédit, centrée.
     Credit(String),
+    /// Lien cliquable, centré : texte affiché et adresse ouverte dans le navigateur.
+    Link(String, &'static str),
     Gap,
 }
 
@@ -29,6 +35,7 @@ impl Line {
         match self {
             Line::Title(_) => 36.0,
             Line::Text(_) | Line::Credit(_) => 22.0,
+            Line::Link(..) => 26.0,
             Line::Key(..) => 28.0,
             Line::Gap => 10.0,
         }
@@ -91,7 +98,7 @@ pub fn lines(lang: Lang, bindings: &Bindings, version: &str) -> Vec<Line> {
             &format!("{COMPANY}, formation et conseil en automatisation et IA"),
             &format!("{COMPANY}, training and consulting in automation and AI"),
         ),
-        Line::Credit(SITE.to_string()),
+        Line::Link(SITE.to_string(), SITE_URL),
         Line::Gap,
         text("Polices Instrument Sans et Noto Sans Mono (OFL).", "Fonts: Instrument Sans and Noto Sans Mono (OFL)."),
     ]);
@@ -112,6 +119,22 @@ pub fn layout(lines: &[Line], scroll: f32) -> Vec<RectF> {
             r
         })
         .collect()
+}
+
+/// Zone cliquable d'un lien : le milieu de sa ligne, pas la ligne entière.
+pub fn link_rect(line: RectF) -> RectF {
+    RectF { x: line.x + (line.w - LINK_W) / 2.0, y: line.y, w: LINK_W, h: line.h }
+}
+
+/// Adresse du lien sous un point, s'il y en a un (et s'il n'est pas caché sous l'en-tête).
+pub fn link_at(lines: &[Line], scroll: f32, p: Pt) -> Option<&'static str> {
+    if p.y < HEADER_H || p.y >= PANEL_H {
+        return None;
+    }
+    lines.iter().zip(layout(lines, scroll)).find_map(|(line, r)| match line {
+        Line::Link(_, url) if link_rect(r).contains(p) => Some(*url),
+        _ => None,
+    })
 }
 
 /// Hauteur totale du contenu défilable.
@@ -137,6 +160,7 @@ mod tests {
             .iter()
             .map(|l| match l {
                 Line::Title(s) | Line::Text(s) | Line::Credit(s) => s.clone(),
+                Line::Link(label, _) => label.clone(),
                 Line::Key(label, key) => format!("{label} {key}"),
                 Line::Gap => String::new(),
             })
@@ -216,5 +240,32 @@ mod tests {
         assert_eq!(clamp_scroll(&ls, 1e6), max_scroll(&ls));
         let last = layout(&ls, max_scroll(&ls)).last().copied().unwrap();
         assert!(last.y + last.h <= PANEL_H);
+    }
+
+    #[test]
+    fn credits_link_to_the_website() {
+        assert_eq!(SITE_URL, "https://eksplodo.fr/");
+        for lang in Lang::all() {
+            let ls = lines(lang, &Bindings::defaults(), "1");
+            let links: Vec<_> = ls.iter().filter(|l| matches!(l, Line::Link(..))).collect();
+            assert_eq!(links, vec![&Line::Link("eksplodo.fr".to_string(), SITE_URL)], "{lang:?}");
+        }
+    }
+
+    #[test]
+    fn clicking_the_link_and_only_the_link_opens_the_website() {
+        let ls = lines(Lang::Fr, &Bindings::defaults(), "1");
+        let scroll = max_scroll(&ls); // les crédits sont en bas de page
+        let i = ls.iter().position(|l| matches!(l, Line::Link(..))).unwrap();
+        let r = link_rect(layout(&ls, scroll)[i]);
+        assert!(r.w < PANEL_W - 2.0 * PAD, "la zone cliquable se limite au lien, pas à toute la ligne");
+        let center = crate::geom::Pt::new(r.x + r.w / 2.0, r.y + r.h / 2.0);
+        assert_eq!(link_at(&ls, scroll, center), Some(SITE_URL));
+        // À côté du lien, sur une autre ligne, ou quand la ligne est cachée sous l'en-tête : rien.
+        assert_eq!(link_at(&ls, scroll, crate::geom::Pt::new(PAD + 2.0, center.y)), None);
+        assert_eq!(link_at(&ls, scroll, crate::geom::Pt::new(center.x, center.y - 60.0)), None);
+        assert_eq!(link_at(&ls, 0.0, center), None);
+        let hidden = layout(&ls, scroll)[i].y - HEADER_H + 30.0;
+        assert_eq!(link_at(&ls, scroll + hidden, crate::geom::Pt::new(center.x, HEADER_H - 5.0)), None);
     }
 }
