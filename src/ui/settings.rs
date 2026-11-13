@@ -192,6 +192,12 @@ pub fn binding_parts(row: RectF, action: Action) -> (Option<RectF>, RectF) {
     (mode, pill)
 }
 
+/// Bouton « Rétablir les raccourcis par défaut » : centré dans sa ligne.
+pub fn reset_rect(row: RectF) -> RectF {
+    const W: f32 = 262.0;
+    RectF { x: row.x + (row.w - W) / 2.0, y: row.y + 12.0, w: W, h: 32.0 }
+}
+
 /// Message affiché quand un raccourci est déjà pris.
 pub fn conflict_message(wanted: Shortcut, with: Action) -> String {
     conflict_message_in(Lang::Fr, wanted, with)
@@ -433,5 +439,14 @@ mod tests {
         assert_eq!(header_hit(gap), Some(HeaderPart::Drag));
         assert_eq!(header_hit(Pt::new(4.0, 4.0)), Some(HeaderPart::Drag));
         assert_eq!(header_hit(Pt::new(50.0, HEADER_H + 5.0)), None); // sous l'en-tête
+    }
+
+    #[test]
+    fn reset_button_is_centered_in_its_row() {
+        let row = layout(0.0).into_iter().find(|(r, _)| *r == Row::ResetBindings).unwrap().1;
+        let b = reset_rect(row);
+        assert_eq!(b.x - row.x, (row.x + row.w) - (b.x + b.w), "marges gauche et droite égales");
+        assert_eq!(b.x + b.w / 2.0, PANEL_W / 2.0);
+        assert!(b.y >= row.y && b.y + b.h <= row.y + row.h);
     }
 }

@@ -87,10 +87,6 @@ fn language_rect(row: RectF) -> RectF {
     RectF { x: c.x + c.w - 164.0, y: c.y, w: 164.0, h: c.h }
 }
 
-fn reset_rect(row: RectF) -> RectF {
-    RectF { x: row.x, y: row.y + 12.0, w: 262.0, h: 32.0 }
-}
-
 impl SettingsView {
     pub fn new(gfx: &Gfx) -> Result<SettingsView> {
         Ok(SettingsView {
@@ -310,7 +306,7 @@ impl SettingsView {
             Row::HideFromCapture => out.push(cmd(UiCommand::SetHideFromCapture(!app.cfg.hide_from_capture))),
             Row::Autostart => out.push(SettingsAction::Autostart(!self.autostart)),
             Row::ResetBindings => {
-                if reset_rect(r).contains(p) {
+                if settings::reset_rect(r).contains(p) {
                     out.push(cmd(UiCommand::ResetBindings));
                 }
             }
@@ -508,7 +504,7 @@ fn draw_row(
         return;
     }
     if row == Row::ResetBindings {
-        let b = reset_rect(r);
+        let b = settings::reset_rect(r);
         p.fill_rrect(b, b.h / 2.0, if hover { theme::HOVER } else { theme::BG });
         p.stroke_rrect(RectF { x: b.x + 0.75, y: b.y + 0.75, w: b.w - 1.5, h: b.h - 1.5 }, b.h / 2.0, theme::LINE, 1.5);
         p.text(row.label_in(lang), Family::Body, 13.0, 600, Align::Center, b, theme::INK);
