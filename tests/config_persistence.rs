@@ -84,7 +84,7 @@ fn save_is_atomic() {
         std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
     assert_eq!(names, vec!["config.json".to_string()]);
     let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(json["version"], 2);
+    assert_eq!(json["version"], 3);
     assert_eq!(json["bindings"]["ToggleDraw"], "Ctrl+Alt+D");
 }
 

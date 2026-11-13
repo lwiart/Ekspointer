@@ -49,6 +49,10 @@ pub enum Effect {
     BindingConflict(Action),
     /// Le raccourci demandé ne convient pas à l'action.
     BindingRejected(Reason),
+    /// Ouvrir ou fermer le panneau de réglages.
+    OpenSettings,
+    /// Ouvrir la page d'aide.
+    OpenHelp,
 }
 
 /// État complet de l'application.
@@ -137,6 +141,11 @@ impl App {
                     Vec::new()
                 }
                 Action::ToggleHalo => self.toggle_halo(),
+                Action::ToggleRipple => self.command(UiCommand::ToggleRipple, now),
+                Action::ToggleTrail => self.command(UiCommand::ToggleTrail, now),
+                Action::TogglePin => self.command(UiCommand::TogglePin, now),
+                Action::OpenSettings => vec![Effect::OpenSettings],
+                Action::OpenHelp => vec![Effect::OpenHelp],
                 Action::ToolArrow => self.select_tool(Tool::Arrow),
                 Action::ToolRect => self.select_tool(Tool::Rect),
                 Action::ToolEllipse => self.select_tool(Tool::Ellipse),
@@ -266,7 +275,7 @@ impl App {
                 Err(BindError::Invalid(reason)) => vec![Effect::BindingRejected(reason)],
             },
             UiCommand::ResetBindings => {
-                self.cfg.bindings = Bindings::defaults();
+                self.cfg.bindings = Bindings::defaults_in(self.cfg.language);
                 vec![Effect::FilterChanged, Effect::ConfigChanged, Effect::UiChanged]
             }
             UiCommand::SetHideFromCapture(on) => {
@@ -281,8 +290,10 @@ impl App {
                 if lang == self.cfg.language {
                     return Vec::new();
                 }
+                // Les raccourcis des outils encore à leur valeur par défaut suivent la langue.
+                self.cfg.bindings.relocalize(self.cfg.language, lang);
                 self.cfg.language = lang;
-                saved
+                vec![Effect::FilterChanged, Effect::ConfigChanged, Effect::UiChanged]
             }
             UiCommand::SetToolbarCollapsed(on) => {
                 self.cfg.toolbar_collapsed = on;
@@ -577,6 +588,27 @@ mod tests {
         let e = a.command(UiCommand::SetLanguage(Lang::En), 0);
         assert_eq!(a.cfg.language, Lang::En);
         assert!(e.contains(&Effect::ConfigChanged) && e.contains(&Effect::UiChanged));
+        // Les raccourcis des outils suivent la langue, et le filtre d'entrées en est informé.
+        assert!(e.contains(&Effect::FilterChanged));
+        assert_eq!(a.cfg.bindings.get(Action::ToolArrow).to_string(), "A");
         assert!(a.command(UiCommand::SetLanguage(Lang::En), 0).is_empty());
+        // « Rétablir les raccourcis par défaut » rétablit ceux de la langue en cours.
+        a.command(UiCommand::SetBinding(Action::ToolArrow, "X".parse().unwrap()), 0);
+        a.command(UiCommand::ResetBindings, 0);
+        assert_eq!(a.cfg.bindings, Bindings::defaults_in(Lang::En));
+    }
+
+    #[test]
+    fn shortcuts_toggle_effects_and_open_panels() {
+        let mut a = app();
+        let (ripple, trail, pinned) = (a.cfg.ripple_on, a.cfg.trail_on, a.cfg.pinned);
+        let e = a.input(InputEvent::Action(Action::ToggleRipple), 0, &one);
+        assert!(a.cfg.ripple_on != ripple && e.contains(&Effect::ConfigChanged) && e.contains(&Effect::UiChanged));
+        a.input(InputEvent::Action(Action::ToggleTrail), 0, &one);
+        assert!(a.cfg.trail_on != trail);
+        a.input(InputEvent::Action(Action::TogglePin), 0, &one);
+        assert!(a.cfg.pinned != pinned && a.scene.pinned() == a.cfg.pinned);
+        assert_eq!(a.input(InputEvent::Action(Action::OpenSettings), 0, &one), vec![Effect::OpenSettings]);
+        assert_eq!(a.input(InputEvent::Action(Action::OpenHelp), 0, &one), vec![Effect::OpenHelp]);
     }
 }

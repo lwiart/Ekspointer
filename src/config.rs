@@ -10,7 +10,9 @@ use std::path::{Path, PathBuf};
 ///
 /// 2 (Ekspointer 0.1.1) : effacement après 1 s au lieu de 5, halo et onde au clic actifs,
 /// barre d'outils visible dans le partage d'écran.
-pub const CURRENT_VERSION: u32 = 2;
+///
+/// 3 (Ekspointer 0.3.0) : le maintien pour dessiner passe de Ctrl+Alt à Ctrl seul.
+pub const CURRENT_VERSION: u32 = 3;
 
 /// Réglages de l'application, enregistrés dans `config.json` à côté de l'exécutable.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
@@ -152,6 +154,15 @@ fn lenient(value: &serde_json::Value) -> Option<Config> {
         c.ripple_on = fresh.ripple_on;
         c.hide_from_capture = fresh.hide_from_capture;
     }
+    if version < 3 {
+        // L'ancien maintien par défaut (Ctrl+Alt) devient Ctrl seul ; un maintien choisi est gardé.
+        use crate::shortcuts::Action;
+        if c.bindings.get(Action::HoldDraw).to_string() == "Ctrl+Alt" {
+            if let Ok(ctrl) = "Ctrl".parse() {
+                let _ = c.bindings.set(Action::HoldDraw, ctrl);
+            }
+        }
+    }
     c.sanitize();
     Some(c)
 }
@@ -214,7 +225,7 @@ mod tests {
     #[test]
     fn defaults_match_spec() {
         let c = Config::default();
-        assert_eq!((c.version, c.hold_seconds, c.width, c.color), (2, 1, 1, 0));
+        assert_eq!((c.version, c.hold_seconds, c.width, c.color), (3, 1, 1, 0));
         assert_eq!(c.last_tool, Tool::Arrow);
         assert_eq!((c.halo_on, c.halo_size, c.halo_follows_color), (true, 64, true));
         assert_eq!((c.ripple_on, c.trail_on, c.pinned), (true, false, false));
@@ -391,7 +402,7 @@ mod tests {
         .unwrap();
         let (c, o) = load(&p);
         assert!(matches!(o, LoadOutcome::Loaded));
-        assert_eq!((c.version, c.hold_seconds, c.halo_on, c.ripple_on, c.hide_from_capture), (2, 1, true, true, false));
+        assert_eq!((c.version, c.hold_seconds, c.halo_on, c.ripple_on, c.hide_from_capture), (3, 1, true, true, false));
         // Le reste est conservé.
         assert_eq!((c.color, c.trail_on), (0, true)); // l'ancien jaune (3) est le nouveau jaune (0)
         assert_eq!(c.bindings.get(Action::ToggleDraw).to_string(), "2×Tab");
@@ -432,5 +443,21 @@ mod tests {
             std::fs::write(&p, format!(r#"{{"version":1,"color":{old}}}"#)).unwrap();
             assert_eq!(load(&p).0.color, new, "ancienne couleur {old}");
         }
+    }
+
+    #[test]
+    fn old_default_hold_becomes_the_single_key() {
+        // Avant la version 3 des réglages, le maintien par défaut était Ctrl+Alt.
+        let hold = |json: &str| {
+            let p = tmp("hold.json");
+            std::fs::write(&p, json).unwrap();
+            load(&p).0.bindings.get(Action::HoldDraw).to_string()
+        };
+        assert_eq!(hold(r#"{"version":2,"bindings":{"HoldDraw":"Ctrl+Alt"}}"#), "Ctrl");
+        assert_eq!(hold(r#"{"version":1}"#), "Ctrl");
+        // Un maintien choisi par l'utilisateur est conservé.
+        assert_eq!(hold(r#"{"version":2,"bindings":{"HoldDraw":"Ctrl+Maj"}}"#), "Ctrl+Maj");
+        // À partir de la version 3, Ctrl+Alt est un choix : il reste.
+        assert_eq!(hold(r#"{"version":3,"bindings":{"HoldDraw":"Ctrl+Alt"}}"#), "Ctrl+Alt");
     }
 }

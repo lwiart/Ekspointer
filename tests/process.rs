@@ -141,7 +141,7 @@ fn writes_config_next_to_executable_on_quit() {
     assert!(s.wait(first, SHUTDOWN).is_some());
 
     let config = json(&s.file("config.json"));
-    assert_eq!(config["version"], 2);
+    assert_eq!(config["version"], 3);
     assert_eq!(config["hold_seconds"], 1);
     assert_eq!(config["halo_on"], true);
     assert_eq!(config["ripple_on"], true);
@@ -269,4 +269,109 @@ fn test_instances_are_isolated_from_each_other() {
     assert!(b.alive(second), "--quit a fermé une instance qui n'était pas la sienne");
     b.run(&["--quit"], QUICK);
     assert!(b.wait(second, SHUTDOWN).is_some());
+}
+
+/// Nombre de crans de molette reçus par la fenêtre témoin du test ci-dessous.
+static WHEEL_SEEN: AtomicU32 = AtomicU32::new(0);
+
+unsafe extern "system" fn probe_proc(
+    hwnd: windows::Win32::Foundation::HWND,
+    msg: u32,
+    wparam: windows::Win32::Foundation::WPARAM,
+    lparam: windows::Win32::Foundation::LPARAM,
+) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::UI::WindowsAndMessaging::{DefWindowProcW, WM_MOUSEWHEEL};
+    if msg == WM_MOUSEWHEEL {
+        WHEEL_SEEN.fetch_add(1, Ordering::SeqCst);
+    }
+    unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+}
+
+/// Traite les messages du fil de test pendant une durée donnée.
+fn pump(duration: Duration) {
+    use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, PeekMessageW, MSG, PM_REMOVE};
+    let start = Instant::now();
+    while start.elapsed() < duration {
+        let mut msg = MSG::default();
+        unsafe {
+            while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                DispatchMessageW(&msg);
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+#[ignore = "lance le vrai exécutable, déplace le curseur une seconde et tourne la molette"]
+fn wheel_reaches_the_window_under_the_overlay_in_draw_mode() {
+    use windows::core::w;
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_WHEEL, MOUSEINPUT};
+    use windows::Win32::UI::WindowsAndMessaging::*;
+
+    // Fenêtre témoin : elle compte les crans de molette qu'elle reçoit.
+    let probe = unsafe {
+        let instance = GetModuleHandleW(None).unwrap();
+        let class = WNDCLASSW {
+            lpfnWndProc: Some(probe_proc),
+            hInstance: instance.into(),
+            lpszClassName: w!("EkspointerWheelProbe"),
+            ..Default::default()
+        };
+        RegisterClassW(&class);
+        CreateWindowExW(
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            w!("EkspointerWheelProbe"),
+            w!("Ekspointer test"),
+            WS_POPUP | WS_VISIBLE,
+            300,
+            400,
+            240,
+            160,
+            None,
+            None,
+            Some(instance.into()),
+            None,
+        )
+        .unwrap()
+    };
+    pump(Duration::from_millis(200));
+
+    // Ekspointer en mode dessin : ses fenêtres de dessin recouvrent tout l'écran, témoin compris.
+    let mut s = Sandbox::new();
+    let child = s.command().args(["--demo-ui=keytool", "--capturable"]).spawn().unwrap();
+    s.children.push(child);
+    pump(Duration::from_millis(1800));
+
+    let mut saved = POINT::default();
+    unsafe {
+        let _ = GetCursorPos(&mut saved);
+    }
+    WHEEL_SEEN.store(0, Ordering::SeqCst);
+    for _ in 0..6 {
+        unsafe {
+            let _ = SetCursorPos(420, 480);
+            let input = INPUT {
+                r#type: INPUT_MOUSE,
+                Anonymous: INPUT_0 {
+                    mi: MOUSEINPUT { mouseData: (-120i32) as u32, dwFlags: MOUSEEVENTF_WHEEL, ..Default::default() },
+                },
+            };
+            SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
+        }
+        pump(Duration::from_millis(150));
+    }
+    unsafe {
+        let _ = SetCursorPos(saved.x, saved.y);
+    }
+    let seen = WHEEL_SEEN.load(Ordering::SeqCst);
+
+    s.run(&["--quit"], QUICK);
+    assert!(s.wait(0, SHUTDOWN).is_some());
+    unsafe {
+        let _ = DestroyWindow(probe);
+    }
+    assert!(seen > 0, "en mode dessin, la molette n'atteint pas la fenêtre située sous les tracés");
 }

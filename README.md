@@ -26,12 +26,14 @@ Une barre d'outils flottante apparaît en haut de l'écran. Glissez-la par son l
 Il y a deux façons de dessiner :
 
 - **Mode dessin** : cliquez sur un outil, ou tapez `Ctrl+Alt+D`. La souris trace. `Échap` rend la main aux applications.
-- **Touche maintenue** : tenez `Ctrl+Alt` (touches de gauche) et glissez la souris. Tout redevient normal au relâchement.
+- **Touche maintenue** : tenez `Ctrl` (à gauche) et glissez la souris. Tout redevient normal au relâchement. La touche se choisit dans les réglages : une ou plusieurs touches parmi Ctrl, Alt, Maj et Win, ou une touche de fonction (F1 à F12).
+
+En mode dessin, la molette continue de faire défiler la page sous les tracés.
 
 | Action | Raccourci par défaut |
 |---|---|
 | Activer ou quitter le dessin | `Ctrl+Alt+D` |
-| Dessiner en maintenant | `Ctrl+Alt` |
+| Dessiner en maintenant | `Ctrl` |
 | Tout effacer | `Ctrl+Alt+E` |
 | Afficher le halo | `Ctrl+Alt+H` |
 | Flèche, Rectangle, Ellipse, Trait libre, Surligneur, Numéros | `F`, `R`, `C`, `D`, `S`, `N` (en mode dessin) |
@@ -41,7 +43,7 @@ Il y a deux façons de dessiner :
 
 Tous les raccourcis se changent dans les réglages. Les raccourcis globaux peuvent être une combinaison de touches ou un **double appui** rapide sur une même touche, par exemple `2×Ctrl` ou `2×Tab`. Avec une touche ordinaire comme Tab, le premier appui atteint l'application en cours ; avec Ctrl ou Maj, le double appui est sans effet dans l'application. Un raccourci global doit comporter Ctrl, Alt ou Win (ou être une touche de fonction), pour ne jamais gêner la frappe.
 
-Sur un clavier français, AltGr n'est jamais pris pour `Ctrl+Alt` : seules les touches Ctrl et Alt de gauche comptent.
+Sur un clavier français, AltGr n'est jamais pris pour un raccourci : seules les touches Ctrl et Alt de gauche comptent. Pendant que `Ctrl` est tenu, `Ctrl+C`, `Ctrl+molette` et les autres raccourcis fonctionnent ; seul `Ctrl+clic` est remplacé par le dessin.
 
 ## Réglages et aide
 

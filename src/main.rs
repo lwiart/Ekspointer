@@ -244,6 +244,8 @@ impl Shell {
                 }
                 Effect::CaptureAffinityChanged => self.apply_capture_affinity(),
                 Effect::BindingConflict(_) | Effect::BindingRejected(_) => {}
+                Effect::OpenSettings => self.toggle_settings(),
+                Effect::OpenHelp => self.open_settings(Tab::Help),
             }
         }
     }
@@ -429,7 +431,7 @@ impl Shell {
                 self.ui.raise();
             }
             Msg::Panel(PanelId::Settings, ev) => {
-                let actions = self.settings.on_event(ev, &self.app);
+                let actions = self.settings.on_event(&self.gfx, ev, &self.app);
                 self.settings_actions(actions, now);
             }
             Msg::Timer(TIMER_CONFLICT) => self.settings.expire(now),
@@ -675,8 +677,10 @@ fn run(args: Args) -> Result<()> {
     // Premier lancement : l'interface prend la langue de Windows (français, sinon anglais).
     if matches!(outcome, LoadOutcome::Defaults) && !demo {
         cfg.language = system_lang();
+        cfg.bindings.relocalize(Lang::Fr, cfg.language);
     }
     if let Some(forced) = args.lang {
+        cfg.bindings.relocalize(cfg.language, forced);
         cfg.language = forced;
     }
     let lang = cfg.language;

@@ -235,10 +235,21 @@ impl Filter {
         events.push(InputEvent::HoldEnd);
     }
 
-    /// Vrai si les touches de modification tenues sont exactement celles du maintien.
+    /// Vrai si le raccourci de maintien est tenu, et rien d'autre.
+    ///
+    /// Le maintien est soit une combinaison de touches de modification (Ctrl, Ctrl+Alt…), soit
+    /// une touche de fonction seule. Maj reste libre, sauf si elle fait partie du raccourci :
+    /// elle sert à contraindre le tracé.
     fn hold_matches(&self) -> bool {
         let hold = self.bindings.get(Action::HoldDraw);
-        hold.key.is_none() && !hold.mods.is_empty() && self.keys.mods() == hold.mods && self.down.is_empty()
+        let mut mods = self.keys.mods();
+        if !hold.mods.shift {
+            mods.shift = false;
+        }
+        match hold.key {
+            None => !hold.mods.is_empty() && mods == hold.mods && self.down.is_empty(),
+            Some(key) => mods.is_empty() && self.down.len() == 1 && self.down.contains(&key),
+        }
     }
 
     fn set_modifier(&mut self, vk: u32, down: bool) -> bool {
@@ -314,9 +325,13 @@ impl Filter {
         }
 
         let vk = normalize_vk(vk);
+        let hold_key = self.bindings.get(Action::HoldDraw).key;
         if !down {
             self.down.remove(&vk);
             self.swallowed_at.remove(&vk);
+            if hold_key == Some(vk) {
+                self.end_hold(&mut d.events);
+            }
             d.swallow = self.swallowed.remove(&vk);
             return d;
         }
@@ -348,6 +363,18 @@ impl Filter {
                 InputEvent::Captured(Shortcut { mods, key: Some(vk), double: false })
             });
             self.set_capturing(false);
+            self.swallowed.insert(vk);
+            self.swallowed_at.insert(vk, self.now);
+            d.swallow = true;
+            return d;
+        }
+
+        // Maintien sur une touche de fonction : elle est interceptée tant qu'elle est tenue.
+        if hold_key == Some(vk) && self.hold_matches() {
+            if !self.hold_active {
+                self.hold_active = true;
+                d.events.push(InputEvent::HoldStart);
+            }
             self.swallowed.insert(vk);
             self.swallowed_at.insert(vk, self.now);
             d.swallow = true;
@@ -466,8 +493,15 @@ impl Filter {
 mod tests {
     use super::*;
 
+    /// Raccourcis par défaut, avec un maintien à deux touches de modification.
+    fn two_keys() -> Bindings {
+        let mut b = Bindings::defaults();
+        b.set(Action::HoldDraw, "Ctrl+Alt".parse().unwrap()).unwrap();
+        b
+    }
+
     fn f() -> Filter {
-        Filter::new(Bindings::defaults())
+        Filter::new(two_keys())
     }
 
     fn hold(f: &mut Filter) {
@@ -500,7 +534,10 @@ mod tests {
     fn extra_modifier_cancels_hold() {
         let mut f = f();
         hold(&mut f);
-        assert!(has(&f.on_key(0xA0, true), InputEvent::HoldEnd)); // Ctrl+Alt+Maj n'est pas Ctrl+Alt
+        // Maj reste libre : elle sert à contraindre le tracé, elle n'interrompt pas le maintien.
+        let d = f.on_key(0xA0, true);
+        assert!(has(&d, InputEvent::Shift(true)) && !has(&d, InputEvent::HoldEnd));
+        assert!(has(&f.on_key(0x5B, true), InputEvent::HoldEnd)); // Ctrl+Alt+Win n'est pas Ctrl+Alt
     }
 
     #[test]
@@ -666,7 +703,7 @@ mod tests {
     #[test]
     fn rebinding_takes_effect() {
         let mut f = f();
-        let mut b = Bindings::defaults();
+        let mut b = two_keys();
         b.set(Action::HoldDraw, "Ctrl+Maj".parse().unwrap()).unwrap();
         f.set_bindings(b);
         f.on_key(0xA2, true);
@@ -674,7 +711,7 @@ mod tests {
     }
 
     fn double_tab() -> Filter {
-        let mut b = Bindings::defaults();
+        let mut b = two_keys();
         b.set(Action::ToggleDraw, "2×Tab".parse().unwrap()).unwrap();
         Filter::new(b)
     }
@@ -731,7 +768,7 @@ mod tests {
     }
 
     fn double_ctrl() -> Filter {
-        let mut b = Bindings::defaults();
+        let mut b = two_keys();
         b.set(Action::ToggleDraw, "2×Ctrl".parse().unwrap()).unwrap();
         Filter::new(b)
     }
@@ -887,5 +924,88 @@ mod tests {
         f.set_draw_mode(true);
         assert!(has(&f.on_key(0x30, true), InputEvent::Action(Action::Color(9))));
         assert!(has(&f.on_key(0x39, true), InputEvent::Action(Action::Color(8))));
+    }
+
+    #[test]
+    fn default_hold_is_the_ctrl_key_alone() {
+        let mut f = Filter::new(Bindings::defaults());
+        let d = f.on_key(0xA2, true);
+        assert!(!d.swallow && has(&d, InputEvent::HoldStart));
+        let d = f.on_mouse(MouseKind::LeftDown, Pt::new(10., 10.));
+        assert!(d.swallow && has(&d, InputEvent::StrokeBegin(Pt::new(10., 10.))));
+        // Maj contraint le tracé sans l'interrompre.
+        let d = f.on_key(0xA0, true);
+        assert!(has(&d, InputEvent::Shift(true)) && !has(&d, InputEvent::HoldEnd));
+        assert!(f.on_mouse(MouseKind::LeftUp, Pt::new(50., 10.)).swallow);
+        f.on_key(0xA0, false);
+        assert!(has(&f.on_key(0xA2, false), InputEvent::HoldEnd));
+        assert!(!f.on_mouse(MouseKind::LeftDown, Pt::new(1., 1.)).swallow);
+    }
+
+    #[test]
+    fn ctrl_shortcuts_still_reach_applications() {
+        // Ctrl+C : la touche C met fin au maintien et n'est pas interceptée.
+        let mut f = Filter::new(Bindings::defaults());
+        f.on_key(0xA2, true);
+        let d = f.on_key(0x43, true);
+        assert!(!d.swallow && has(&d, InputEvent::HoldEnd));
+        assert!(!f.on_mouse(MouseKind::LeftDown, Pt::new(1., 1.)).swallow);
+        // AltGr (Ctrl gauche + Alt droit) ne laisse pas le maintien actif.
+        let mut f = Filter::new(Bindings::defaults());
+        f.on_key(0xA2, true);
+        assert!(has(&f.on_key(0xA5, true), InputEvent::HoldEnd));
+        assert!(!f.on_mouse(MouseKind::LeftDown, Pt::new(1., 1.)).swallow);
+    }
+
+    fn hold_on_f8() -> Filter {
+        let mut b = Bindings::defaults();
+        b.set(Action::HoldDraw, "F8".parse().unwrap()).unwrap();
+        Filter::new(b)
+    }
+
+    const F8: u32 = 0x77;
+
+    #[test]
+    fn hold_on_a_function_key() {
+        let mut f = hold_on_f8();
+        // La touche est interceptée : l'application en cours ne la reçoit pas.
+        let d = f.on_key(F8, true);
+        assert!(d.swallow && has(&d, InputEvent::HoldStart));
+        let d = f.on_key(F8, true); // répétition clavier
+        assert!(d.swallow && d.events.is_empty());
+        assert!(f.on_mouse(MouseKind::LeftDown, Pt::new(0., 0.)).swallow);
+        let d = f.on_key(0xA0, true); // Maj : contrainte, le maintien continue
+        assert!(!has(&d, InputEvent::HoldEnd));
+        let d = f.on_key(F8, false);
+        assert!(d.swallow && has(&d, InputEvent::StrokeEnd) && has(&d, InputEvent::HoldEnd));
+        assert!(f.on_mouse(MouseKind::LeftUp, Pt::new(9., 9.)).swallow);
+        assert!(!f.on_mouse(MouseKind::LeftDown, Pt::new(1., 1.)).swallow);
+    }
+
+    #[test]
+    fn function_key_hold_needs_the_key_alone() {
+        let mut f = hold_on_f8();
+        f.on_key(0xA2, true);
+        let d = f.on_key(F8, true); // Ctrl+F8 n'est pas le maintien
+        assert!(!d.swallow && !has(&d, InputEvent::HoldStart));
+        // Ctrl seul ne déclenche plus rien quand le maintien est sur F8.
+        let mut f = hold_on_f8();
+        assert!(f.on_key(0xA2, true).events.is_empty());
+        // Une autre touche pendant le maintien y met fin.
+        let mut f = hold_on_f8();
+        f.on_key(F8, true);
+        assert!(has(&f.on_key(0x41, true), InputEvent::HoldEnd));
+    }
+
+    #[test]
+    fn new_global_shortcuts_fire_in_any_mode() {
+        let mut f = Filter::new(Bindings::defaults());
+        f.on_key(0xA2, true);
+        f.on_key(0xA4, true);
+        let d = f.on_key(0x4F, true); // Ctrl+Alt+O
+        assert!(d.swallow && has(&d, InputEvent::Action(Action::ToggleRipple)));
+        f.on_key(0x4F, false);
+        let d = f.on_key(0x41, true); // Ctrl+Alt+A
+        assert!(d.swallow && has(&d, InputEvent::Action(Action::OpenHelp)));
     }
 }

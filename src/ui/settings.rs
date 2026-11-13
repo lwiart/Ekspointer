@@ -260,8 +260,8 @@ mod tests {
         let r = rows();
         let headers: Vec<_> = r.iter().filter_map(|x| if let Row::Header(h) = x { Some(*h) } else { None }).collect();
         assert_eq!(headers, vec!["Général", "Dessin", "Pointeur", "Raccourcis"]);
-        // 4 globaux + 6 outils + 10 couleurs + annuler + quitter
-        assert_eq!(r.iter().filter(|x| matches!(x, Row::Binding(_))).count(), 22);
+        // 9 globaux + 6 outils + 10 couleurs + annuler + quitter
+        assert_eq!(r.iter().filter(|x| matches!(x, Row::Binding(_))).count(), 27);
         for row in [Row::HoldSeconds, Row::Width, Row::HaloSize, Row::HaloFollowsColor, Row::ResetBindings, Row::Autostart, Row::HideFromCapture] {
             assert!(r.contains(&row), "{row:?}");
         }

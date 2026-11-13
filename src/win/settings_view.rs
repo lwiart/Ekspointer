@@ -1,15 +1,17 @@
 //! Panneau de réglages et d'aide : état d'affichage, réactions à la souris et dessin.
 
 use super::gfx::{Align, Family, Gfx, Painter};
+use super::icons;
 use super::panel::{Panel, PanelEvent, PanelId};
 use super::ui::{cursor, SURFACE};
 use ekspointer::app::{App, UiCommand};
-use ekspointer::geom::{Pt, RectF, Rgba, WIDTHS};
+use ekspointer::geom::{Pt, RectF, Rgba, PALETTE, WIDTHS};
 use ekspointer::i18n::{t, Lang, Text};
 use ekspointer::shortcuts::Action;
 use ekspointer::ui::help::{self, Line};
 use ekspointer::ui::settings::{self, HeaderPart, Row, Tab, HEADER_H, PANEL_H, PANEL_W};
 use ekspointer::ui::theme;
+use ekspointer::ui::toolbar::{self, Item};
 use windows::core::Result;
 
 /// Couleur des messages d'alerte (ambre foncé du design system, lisible en petit corps).
@@ -44,14 +46,24 @@ pub struct SettingsView {
     hover_link: bool,
     /// Curseur en cours de glissement.
     dragging: Option<Row>,
-    /// Déplacement du panneau en cours : écart entre le curseur et le coin du panneau.
-    moving: Option<(i32, i32)>,
+    /// Déplacement du panneau en cours.
+    moving: Option<Move>,
     /// Action dont le raccourci est en cours de saisie, et type de saisie.
     pub capturing: Option<(Action, bool)>,
     /// Message de conflit : ligne concernée, texte, instant d'expiration.
     conflict: Option<(Action, String, u64)>,
     autostart: bool,
     pub dirty: bool,
+}
+
+/// Déplacement du panneau par son en-tête : il est réduit de moitié le temps du déplacement.
+struct Move {
+    /// Écart entre le curseur et le coin du panneau au début, à taille normale.
+    grab: (i32, i32),
+    start: (i32, i32),
+    moved: bool,
+    /// Échelle du panneau avant le déplacement.
+    base_scale: f32,
 }
 
 /// Glissière d'un curseur : la zone de contrôle moins la place de la valeur affichée.
@@ -167,7 +179,7 @@ impl SettingsView {
     }
 
     /// Traite un événement de souris du panneau.
-    pub fn on_event(&mut self, ev: PanelEvent, app: &App) -> Vec<SettingsAction> {
+    pub fn on_event(&mut self, gfx: &Gfx, ev: PanelEvent, app: &App) -> Vec<SettingsAction> {
         let mut out = Vec::new();
         self.dirty = true;
         match ev {
@@ -184,14 +196,23 @@ impl SettingsView {
             }
             PanelEvent::Cancel => {
                 self.dragging = None;
-                self.moving = None;
+                if let Some(m) = self.moving.take() {
+                    self.end_move(gfx, m);
+                }
             }
             PanelEvent::Move(p) => {
                 let p = self.panel.to_dip(p);
-                if let Some(grab) = self.moving {
-                    // Déplacement du panneau par son en-tête.
+                if let Some(m) = &mut self.moving {
+                    // Déplacement du panneau par son en-tête, à demi-taille sous le curseur.
                     let c = cursor();
-                    self.panel.move_to((c.0 - grab.0, c.1 - grab.1));
+                    let pos = toolbar::drag_origin(c, m.grab, toolbar::DRAG_SHRINK);
+                    if m.moved {
+                        self.panel.move_to(pos);
+                    } else if (c.0 - m.start.0).abs() + (c.1 - m.start.1).abs() > 4 {
+                        m.moved = true;
+                        let scale = m.base_scale * toolbar::DRAG_SHRINK;
+                        let _ = self.panel.place(gfx, pos, (PANEL_W, PANEL_H), theme::R_PANEL, scale);
+                    }
                 } else if let Some(row) = self.dragging {
                     out.extend(self.slider_command(row, p.x));
                 } else {
@@ -204,7 +225,12 @@ impl SettingsView {
                 let p = self.panel.to_dip(p);
                 if settings::header_hit(p) == Some(HeaderPart::Drag) {
                     let c = cursor();
-                    self.moving = Some((c.0 - self.panel.pos.0, c.1 - self.panel.pos.1));
+                    self.moving = Some(Move {
+                        grab: (c.0 - self.panel.pos.0, c.1 - self.panel.pos.1),
+                        start: c,
+                        moved: false,
+                        base_scale: self.panel.scale,
+                    });
                 } else if self.tab == Tab::Settings {
                     if let Some(row @ (Row::HoldSeconds | Row::HaloSize)) = settings::hit(self.scroll, p) {
                         self.dragging = Some(row);
@@ -214,7 +240,11 @@ impl SettingsView {
             }
             PanelEvent::Up(p) => {
                 let p = self.panel.to_dip(p);
-                if self.moving.take().is_some() || self.dragging.take().is_some() {
+                if let Some(m) = self.moving.take() {
+                    self.end_move(gfx, m);
+                    return out;
+                }
+                if self.dragging.take().is_some() {
                     return out;
                 }
                 match settings::header_hit(p) {
@@ -240,6 +270,15 @@ impl SettingsView {
             PanelEvent::DoubleClick(_) => {}
         }
         out
+    }
+
+    /// Fin d'un déplacement : le panneau reprend sa taille, le point saisi sous le curseur.
+    fn end_move(&mut self, gfx: &Gfx, m: Move) {
+        if m.moved {
+            let pos = toolbar::drag_origin(cursor(), m.grab, 1.0);
+            let _ = self.panel.place(gfx, pos, (PANEL_W, PANEL_H), theme::R_PANEL, m.base_scale);
+            self.dirty = true;
+        }
     }
 
     /// Adresse du lien de la page d'aide sous un point.
@@ -325,7 +364,7 @@ impl SettingsView {
                             if r.y + r.h < HEADER_H || r.y > PANEL_H {
                                 continue;
                             }
-                            draw_help_line(p, line, r, hover_link);
+                            draw_help_line(p, line, r, hover_link, app.cfg.color);
                         }
                     });
                     (help_scroll, help::max_scroll(&lines), help::content_height(&lines))
@@ -372,8 +411,25 @@ fn draw_header(p: &Painter, lang: Lang, tab: Tab, hover: Option<HeaderPart>) {
     p.line(Pt::new(0.0, HEADER_H - 0.5), Pt::new(PANEL_W, HEADER_H - 0.5), theme::LINE, 1.0, false);
 }
 
-fn draw_help_line(p: &Painter, line: &Line, r: RectF, hover_link: bool) {
+fn draw_help_line(p: &Painter, line: &Line, r: RectF, hover_link: bool, color: u8) {
     match line {
+        Line::Button(item, label, key) => {
+            // L'icône du bouton, telle qu'elle apparaît dans la barre, puis son nom et son raccourci.
+            let icon = RectF { x: r.x + 2.0, y: r.y + (r.h - 20.0) / 2.0, w: 20.0, h: 20.0 };
+            if *item == Item::Color {
+                p.fill_circle(icon.center(), 8.0, PALETTE[color as usize % PALETTE.len()]);
+                p.stroke_ellipse(icon.center(), 8.0, 8.0, theme::LINE, 1.5);
+            } else {
+                icons::draw(p, *item, icon, theme::INK);
+            }
+            p.text(label, Family::Body, 13.0, 500, Align::Left, RectF { x: r.x + 34.0, w: r.w - 34.0, ..r }, theme::INK);
+            if let Some(key) = key {
+                let w = p.gfx.text_width(key, Family::Mono, 11.0, 600) + 20.0;
+                let pill = RectF { x: r.x + r.w - w, y: r.y + 3.0, w, h: r.h - 6.0 };
+                p.fill_rrect(pill, pill.h / 2.0, SURFACE);
+                p.text(key, Family::Mono, 11.0, 600, Align::Center, pill, theme::INK);
+            }
+        }
         Line::Link(label, _) => {
             // Lien : bleu et souligné, sur un fond clair au survol.
             let zone = help::link_rect(r);

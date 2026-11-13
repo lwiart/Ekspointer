@@ -254,6 +254,12 @@ pub enum Action {
     HoldDraw,
     ClearAll,
     ToggleHalo,
+    ToggleRipple,
+    ToggleTrail,
+    /// Garder les tracés à l'écran (épingle).
+    TogglePin,
+    OpenSettings,
+    OpenHelp,
     ToolArrow,
     ToolRect,
     ToolEllipse,
@@ -283,6 +289,11 @@ impl Action {
             Action::HoldDraw,
             Action::ClearAll,
             Action::ToggleHalo,
+            Action::ToggleRipple,
+            Action::ToggleTrail,
+            Action::TogglePin,
+            Action::OpenSettings,
+            Action::OpenHelp,
             Action::ToolArrow,
             Action::ToolRect,
             Action::ToolEllipse,
@@ -297,7 +308,18 @@ impl Action {
 
     /// Vrai pour les raccourcis actifs dans tous les modes.
     pub fn is_global(self) -> bool {
-        matches!(self, Action::ToggleDraw | Action::HoldDraw | Action::ClearAll | Action::ToggleHalo)
+        matches!(
+            self,
+            Action::ToggleDraw
+                | Action::HoldDraw
+                | Action::ClearAll
+                | Action::ToggleHalo
+                | Action::ToggleRipple
+                | Action::ToggleTrail
+                | Action::TogglePin
+                | Action::OpenSettings
+                | Action::OpenHelp
+        )
     }
 
     /// Libellé affiché dans les réglages.
@@ -307,6 +329,11 @@ impl Action {
             Action::HoldDraw => "Dessiner en maintenant",
             Action::ClearAll => "Tout effacer",
             Action::ToggleHalo => "Afficher le halo",
+            Action::ToggleRipple => "Onde au clic",
+            Action::ToggleTrail => "Traînée laser",
+            Action::TogglePin => "Garder les tracés",
+            Action::OpenSettings => "Réglages",
+            Action::OpenHelp => "Aide",
             Action::ToolArrow => "Flèche",
             Action::ToolRect => "Rectangle",
             Action::ToolEllipse => "Ellipse",
@@ -329,6 +356,11 @@ impl Action {
             Action::HoldDraw => "Draw while held",
             Action::ClearAll => "Clear all",
             Action::ToggleHalo => "Show halo",
+            Action::ToggleRipple => "Click ripple",
+            Action::ToggleTrail => "Laser trail",
+            Action::TogglePin => "Keep drawings",
+            Action::OpenSettings => "Settings",
+            Action::OpenHelp => "Help",
             Action::ToolArrow => "Arrow",
             Action::ToolRect => "Rectangle",
             Action::ToolEllipse => "Ellipse",
@@ -348,6 +380,11 @@ impl Action {
             Action::HoldDraw => "HoldDraw",
             Action::ClearAll => "ClearAll",
             Action::ToggleHalo => "ToggleHalo",
+            Action::ToggleRipple => "ToggleRipple",
+            Action::ToggleTrail => "ToggleTrail",
+            Action::TogglePin => "TogglePin",
+            Action::OpenSettings => "OpenSettings",
+            Action::OpenHelp => "OpenHelp",
             Action::ToolArrow => "ToolArrow",
             Action::ToolRect => "ToolRect",
             Action::ToolEllipse => "ToolEllipse",
@@ -364,12 +401,33 @@ impl Action {
         Action::all().into_iter().find(|a| a.name() == name)
     }
 
+    /// Raccourci par défaut dans une langue : la lettre des outils est l'initiale de leur nom.
+    fn default_shortcut_in(self, lang: Lang) -> Shortcut {
+        let letter = match (lang, self) {
+            (Lang::En, Action::ToolArrow) => "A",
+            (Lang::En, Action::ToolEllipse) => "E",
+            (Lang::En, Action::ToolFree) => "F",
+            (Lang::En, Action::ToolHighlighter) => "H",
+            (Lang::En, Action::ToggleRipple) => "Ctrl+Alt+R",
+            (Lang::En, Action::TogglePin) => "Ctrl+Alt+K",
+            (Lang::En, Action::OpenSettings) => "Ctrl+Alt+S",
+            (Lang::En, Action::OpenHelp) => "Ctrl+Alt+F1",
+            _ => return self.default_shortcut(),
+        };
+        letter.parse().expect("raccourci par défaut valide")
+    }
+
     fn default_shortcut(self) -> Shortcut {
         let s = match self {
             Action::ToggleDraw => "Ctrl+Alt+D",
-            Action::HoldDraw => "Ctrl+Alt",
+            Action::HoldDraw => "Ctrl",
             Action::ClearAll => "Ctrl+Alt+E",
             Action::ToggleHalo => "Ctrl+Alt+H",
+            Action::ToggleRipple => "Ctrl+Alt+O",
+            Action::ToggleTrail => "Ctrl+Alt+T",
+            Action::TogglePin => "Ctrl+Alt+G",
+            Action::OpenSettings => "Ctrl+Alt+R",
+            Action::OpenHelp => "Ctrl+Alt+A",
             Action::ToolArrow => "F",
             Action::ToolRect => "R",
             Action::ToolEllipse => "C",
@@ -415,7 +473,7 @@ pub enum BindError {
 /// Pourquoi un raccourci ne convient pas à une action.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Reason {
-    /// Le raccourci de maintien ne comporte que des touches de modification.
+    /// Le raccourci de maintien : des touches de modification seules, ou une touche de fonction seule.
     HoldModifiersOnly,
     /// Il manque une touche.
     NeedsKey,
@@ -427,8 +485,8 @@ impl Reason {
     /// Explication affichée dans les réglages.
     pub fn message(self, lang: Lang) -> &'static str {
         match (self, lang) {
-            (Reason::HoldModifiersOnly, Lang::Fr) => "Ce raccourci se maintient : utilisez seulement Ctrl, Alt, Maj ou Win.",
-            (Reason::HoldModifiersOnly, Lang::En) => "This shortcut is held down: use only Ctrl, Alt, Shift or Win.",
+            (Reason::HoldModifiersOnly, Lang::Fr) => "Ce raccourci se maintient : Ctrl, Alt, Maj, Win, ou une touche F1 à F12.",
+            (Reason::HoldModifiersOnly, Lang::En) => "This shortcut is held down: Ctrl, Alt, Shift, Win, or an F1 to F12 key.",
             (Reason::NeedsKey, Lang::Fr) => "Ajoutez une touche à ce raccourci.",
             (Reason::NeedsKey, Lang::En) => "Add a key to this shortcut.",
             (Reason::NeedsModifier, Lang::Fr) => "Ajoutez Ctrl, Alt ou Win, ou choisissez une touche de fonction.",
@@ -440,7 +498,10 @@ impl Reason {
 /// Vérifie qu'un raccourci convient à une action, indépendamment des autres raccourcis.
 pub fn validate(action: Action, s: Shortcut) -> Result<(), Reason> {
     if action == Action::HoldDraw {
-        return if s.key.is_none() && !s.mods.is_empty() && !s.double { Ok(()) } else { Err(Reason::HoldModifiersOnly) };
+        // Des touches de modification seules (Ctrl, Ctrl+Alt…), ou une touche de fonction seule.
+        let modifiers_only = s.key.is_none() && !s.mods.is_empty();
+        let function_key = s.mods.is_empty() && s.key.is_some_and(|k| (0x70..=0x7B).contains(&k));
+        return if !s.double && (modifiers_only || function_key) { Ok(()) } else { Err(Reason::HoldModifiersOnly) };
     }
     let Some(key) = s.key else {
         return Err(Reason::NeedsKey);
@@ -470,6 +531,27 @@ impl Default for Bindings {
 impl Bindings {
     pub fn defaults() -> Bindings {
         Bindings(Action::all().into_iter().map(|a| (a, a.default_shortcut())).collect())
+    }
+
+    /// Raccourcis par défaut d'une langue.
+    pub fn defaults_in(lang: Lang) -> Bindings {
+        Bindings(Action::all().into_iter().map(|a| (a, a.default_shortcut_in(lang))).collect())
+    }
+
+    /// Changement de langue : les raccourcis restés à leur valeur par défaut dans l'ancienne
+    /// langue prennent celle de la nouvelle. Un raccourci choisi par l'utilisateur est conservé,
+    /// et un outil garde sa lettre si la nouvelle est déjà prise par un tel choix.
+    pub fn relocalize(&mut self, from: Lang, to: Lang) {
+        let moving: Vec<Action> =
+            Action::all().into_iter().filter(|a| self.get(*a) == a.default_shortcut_in(from)).collect();
+        let kept: Vec<Shortcut> =
+            self.0.iter().filter(|(a, _)| !moving.contains(a)).map(|(_, s)| s.normalized()).collect();
+        for a in moving {
+            let wanted = a.default_shortcut_in(to);
+            if !kept.contains(&wanted.normalized()) {
+                self.0.insert(a, wanted);
+            }
+        }
     }
 
     pub fn get(&self, a: Action) -> Shortcut {
@@ -583,7 +665,7 @@ mod tests {
         let b = Bindings::defaults();
         let g = |a| b.get(a).to_string();
         assert_eq!(g(Action::ToggleDraw), "Ctrl+Alt+D");
-        assert_eq!(g(Action::HoldDraw), "Ctrl+Alt");
+        assert_eq!(g(Action::HoldDraw), "Ctrl");
         assert_eq!(g(Action::ClearAll), "Ctrl+Alt+E");
         assert_eq!(g(Action::ToggleHalo), "Ctrl+Alt+H");
         assert_eq!(g(Action::ToolArrow), "F");
@@ -598,7 +680,7 @@ mod tests {
         assert_eq!(g(Action::Color(9)), "0"); // la dixième couleur est sur la touche 0
         assert_eq!(g(Action::Undo), "Ctrl+Z");
         assert_eq!(g(Action::ExitDraw), "Échap");
-        assert_eq!(b.all().len(), 22);
+        assert_eq!(b.all().len(), 27);
     }
 
     #[test]
@@ -607,8 +689,8 @@ mod tests {
         assert_eq!(b.set(Action::ToolRect, sc("F")), Err(BindError::Conflict(Action::ToolArrow)));
         assert_eq!(b.get(Action::ToolRect).to_string(), "R");
         assert!(b.set(Action::ToolRect, sc("R")).is_ok()); // réaffecter sa propre valeur
-        assert!(b.set(Action::ToolRect, sc("Ctrl+Alt+R")).is_ok());
-        assert_eq!(b.get(Action::ToolRect).to_string(), "Ctrl+Alt+R");
+        assert!(b.set(Action::ToolRect, sc("Ctrl+Alt+Y")).is_ok());
+        assert_eq!(b.get(Action::ToolRect).to_string(), "Ctrl+Alt+Y");
     }
 
     #[test]
@@ -765,8 +847,13 @@ mod tests {
         assert!(invalid(b.set(Action::HoldDraw, sc("Ctrl+Alt+X"))));
         assert!(invalid(b.set(Action::HoldDraw, sc("2×Ctrl"))));
         assert!(invalid(b.set(Action::HoldDraw, sc("X"))));
-        assert_eq!(b.get(Action::HoldDraw).to_string(), "Ctrl+Alt");
+        assert!(invalid(b.set(Action::HoldDraw, sc("Ctrl+F8"))));
+        assert_eq!(b.get(Action::HoldDraw).to_string(), "Ctrl");
         assert!(b.set(Action::HoldDraw, sc("Ctrl+Maj")).is_ok());
+        assert!(b.set(Action::HoldDraw, sc("Ctrl+Alt")).is_ok());
+        // Une touche de fonction seule convient aussi.
+        assert!(b.set(Action::HoldDraw, sc("F8")).is_ok());
+        assert_eq!(b.set(Action::ClearAll, sc("F8")), Err(BindError::Conflict(Action::HoldDraw)));
     }
 
     #[test]
@@ -775,7 +862,7 @@ mod tests {
             serde_json::from_str(r#"{"ClearAll":"E","ToggleDraw":"Ctrl","HoldDraw":"Ctrl+Alt+X","ToolRect":"X"}"#).unwrap();
         assert_eq!(b.get(Action::ClearAll).to_string(), "Ctrl+Alt+E");
         assert_eq!(b.get(Action::ToggleDraw).to_string(), "Ctrl+Alt+D");
-        assert_eq!(b.get(Action::HoldDraw).to_string(), "Ctrl+Alt");
+        assert_eq!(b.get(Action::HoldDraw).to_string(), "Ctrl");
         assert_eq!(b.get(Action::ToolRect).to_string(), "X");
     }
 
@@ -854,5 +941,78 @@ mod tests {
         assert_eq!(Action::Color(9).name(), "Color10");
         assert_eq!(Action::from_name("Color10"), Some(Action::Color(9)));
         assert_eq!(Action::all().iter().filter(|a| matches!(a, Action::Color(_))).count(), 10);
+    }
+
+    #[test]
+    fn tool_shortcuts_follow_the_language() {
+        use crate::i18n::Lang;
+        let en = Bindings::defaults_in(Lang::En);
+        let g = |a| en.get(a).to_string();
+        // Première lettre du nom anglais de l'outil.
+        assert_eq!(g(Action::ToolArrow), "A");
+        assert_eq!(g(Action::ToolRect), "R");
+        assert_eq!(g(Action::ToolEllipse), "E");
+        assert_eq!(g(Action::ToolFree), "F");
+        assert_eq!(g(Action::ToolHighlighter), "H");
+        assert_eq!(g(Action::ToolNumber), "N");
+        // Le reste ne dépend pas de la langue.
+        assert_eq!(g(Action::ToggleDraw), "Ctrl+Alt+D");
+        assert_eq!(g(Action::Color(0)), "1");
+        assert_eq!(Bindings::defaults_in(Lang::Fr), Bindings::defaults());
+    }
+
+    #[test]
+    fn switching_language_moves_default_tool_shortcuts_only() {
+        use crate::i18n::Lang;
+        let mut b = Bindings::defaults();
+        b.relocalize(Lang::Fr, Lang::En);
+        assert_eq!(b, Bindings::defaults_in(Lang::En));
+        b.relocalize(Lang::En, Lang::Fr);
+        assert_eq!(b, Bindings::defaults());
+
+        // Un raccourci choisi par l'utilisateur est conservé.
+        let mut b = Bindings::defaults();
+        b.set(Action::ToolArrow, sc("X")).unwrap();
+        b.relocalize(Lang::Fr, Lang::En);
+        assert_eq!(b.get(Action::ToolArrow).to_string(), "X");
+        assert_eq!(b.get(Action::ToolEllipse).to_string(), "E");
+
+        // Si la lettre anglaise est déjà prise par un choix de l'utilisateur, l'outil garde la sienne.
+        let mut b = Bindings::defaults();
+        b.set(Action::Undo, sc("H")).unwrap();
+        b.relocalize(Lang::Fr, Lang::En);
+        assert_eq!(b.get(Action::ToolHighlighter).to_string(), "S");
+        assert_eq!(b.get(Action::Undo).to_string(), "H");
+        // Aucun doublon, dans tous les cas.
+        let all = b.all();
+        for (i, (_, s)) in all.iter().enumerate() {
+            assert!(all[i + 1..].iter().all(|(_, o)| o != s), "doublon sur {s}");
+        }
+    }
+
+    #[test]
+    fn pointer_effects_settings_and_help_have_shortcuts() {
+        use crate::i18n::Lang;
+        let extra = [Action::ToggleRipple, Action::ToggleTrail, Action::TogglePin, Action::OpenSettings, Action::OpenHelp];
+        let keys = |lang| {
+            let b = Bindings::defaults_in(lang);
+            extra.map(|a| b.get(a).to_string())
+        };
+        // Initiale du nom dans chaque langue : Onde, Traînée, Garder, Réglages, Aide.
+        assert_eq!(keys(Lang::Fr), ["Ctrl+Alt+O", "Ctrl+Alt+T", "Ctrl+Alt+G", "Ctrl+Alt+R", "Ctrl+Alt+A"]);
+        // Ripple, Trail, Keep, Settings ; Help prend F1, la lettre H étant celle du halo.
+        assert_eq!(keys(Lang::En), ["Ctrl+Alt+R", "Ctrl+Alt+T", "Ctrl+Alt+K", "Ctrl+Alt+S", "Ctrl+Alt+F1"]);
+        for a in extra {
+            assert!(a.is_global(), "{a:?}");
+            assert_eq!(Action::from_name(a.name()), Some(a));
+            assert_ne!(a.label_in(Lang::En), a.label());
+        }
+        // Aucun doublon dans les raccourcis par défaut, dans les deux langues.
+        for lang in Lang::all() {
+            let all = Bindings::defaults_in(lang).all();
+            for (i, (_, s)) in all.iter().enumerate() {
+                assert!(all[i + 1..].iter().all(|(_, o)| o != s), "doublon sur {s} en {lang:?}");
+            }
+        }
     }
 }

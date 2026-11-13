@@ -344,3 +344,16 @@ Ces points remplacent ce que les sections précédentes en disaient.
 - **Installateur** : en français ou en anglais, selon la langue de Windows.
 - **Bouton Quitter** (version 0.2.1) : une croix au bout de la barre d'outils, séparée des autres boutons par un filet, ferme Ekspointer. Le menu de la zone de notification garde aussi son entrée « Quitter ».
 - **Lien vers le site** (version 0.2.2) : dans les crédits de la page d'aide, « eksplodo.fr » est un lien cliquable qui ouvre `https://eksplodo.fr/` dans le navigateur par défaut.
+
+## 11. Évolutions de la version 0.3.0 (demandes de l'utilisateur, 13/11/2026)
+
+But : passer du pointeur au dessin sans aller dans la barre d'outils.
+
+- **Maintien sur une seule touche** : par défaut, tenir `Ctrl` (à gauche) et glisser dessine. Le raccourci se choisit dans les réglages : une ou plusieurs touches de modification (Ctrl, Alt, Maj, Win), ou une touche de fonction seule (F1 à F12), qui est alors interceptée tant qu'elle est tenue. Conséquence assumée du défaut : `Ctrl+clic` dessine au lieu d'atteindre l'application ; `Ctrl+C`, `Ctrl+molette` et les autres raccourcis ne sont pas touchés. Un fichier de réglages antérieur dont le maintien était l'ancien défaut `Ctrl+Alt` passe à `Ctrl` ; un maintien choisi est conservé.
+- **Maj pendant le maintien** : elle contraint le tracé sans interrompre le maintien (elle l'interrompait auparavant).
+- **Molette en mode dessin** : la molette est transmise à la fenêtre située sous les tracés, qui défile normalement.
+- **Aide** : chaque bouton de la barre est listé avec son icône, son nom et son raccourci.
+- **Panneau de réglages** : réduit de moitié pendant son déplacement, comme la barre d'outils.
+- **Passer du pointeur au dessin au clavier** : c'est le raccourci « Activer le dessin » (`Ctrl+Alt+D` par défaut), réglable en combinaison de touches ou en double appui.
+- **Raccourcis des outils selon la langue** : en français `F`, `R`, `C`, `D`, `S`, `N` (Flèche, Rectangle, Cercle, Dessin libre, Surligneur, Numéros) ; en anglais `A`, `R`, `E`, `F`, `H`, `N` (Arrow, Rectangle, Ellipse, Freehand, Highlighter, Numbers). Au changement de langue, seuls les raccourcis restés à leur valeur par défaut changent ; un raccourci choisi est conservé. « Rétablir les raccourcis par défaut » rétablit ceux de la langue en cours.
+- **Nouveaux raccourcis globaux** : onde au clic (`Ctrl+Alt+O`, en anglais `Ctrl+Alt+R`), traînée laser (`Ctrl+Alt+T`), garder les tracés (`Ctrl+Alt+G`, en anglais `Ctrl+Alt+K`), réglages (`Ctrl+Alt+R`, en anglais `Ctrl+Alt+S`), aide (`Ctrl+Alt+A`, en anglais `Ctrl+Alt+F1`). Tous sont modifiables, en combinaison de touches ou en double appui.

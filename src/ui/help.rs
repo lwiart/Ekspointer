@@ -2,8 +2,10 @@
 
 use crate::geom::{Pt, RectF};
 use crate::i18n::Lang;
+use crate::shapes::Tool;
 use crate::shortcuts::{Action, Bindings};
 use crate::ui::settings::{HEADER_H, PAD, PANEL_H, PANEL_W};
+use crate::ui::toolbar::{self, Item};
 
 /// Auteur d'Ekspointer.
 pub const AUTHOR: &str = "Laurent Wiart";
@@ -25,6 +27,8 @@ pub enum Line {
     Key(String, String),
     /// Ligne de crédit, centrée.
     Credit(String),
+    /// Bouton de la barre d'outils : son icône, son nom et, s'il en a un, son raccourci.
+    Button(Item, String, Option<String>),
     /// Lien cliquable, centré : texte affiché et adresse ouverte dans le navigateur.
     Link(String, &'static str),
     Gap,
@@ -36,7 +40,7 @@ impl Line {
             Line::Title(_) => 36.0,
             Line::Text(_) | Line::Credit(_) => 22.0,
             Line::Link(..) => 26.0,
-            Line::Key(..) => 28.0,
+            Line::Key(..) | Line::Button(..) => 28.0,
             Line::Gap => 10.0,
         }
     }
@@ -51,41 +55,55 @@ pub fn lines(lang: Lang, bindings: &Bindings, version: &str) -> Vec<Line> {
     let credit = |f: &str, e: &str| Line::Credit(pick(f, e));
     let key = |a: Action| Line::Key(a.label_in(lang).to_string(), bindings.get(a).display(lang));
 
+    let button = |item: Item| {
+        let (name, shortcut) = toolbar::tooltip_in(item, bindings, lang).unwrap_or_default();
+        Line::Button(item, name, shortcut)
+    };
+
     let mut out = vec![
         title("Dessiner", "Drawing"),
         text("Cliquez sur un outil : la souris trace.", "Click a tool: the mouse draws."),
         text("Échap ou l'outil Curseur rend la main.", "Esc or the Cursor tool gives control back."),
         text("Ou maintenez le raccourci ci-dessous et glissez.", "Or hold the shortcut below and drag."),
+        text("La molette fait défiler la page, même en mode dessin.", "The wheel scrolls the page, even in drawing mode."),
         key(Action::ToggleDraw),
         key(Action::HoldDraw),
         key(Action::ClearAll),
-        key(Action::ToggleHalo),
         Line::Gap,
-        title("Pendant le dessin", "While drawing"),
+        title("Outils", "Tools"),
+        button(Item::Tool(None)),
     ];
-    for a in [
-        Action::ToolArrow,
-        Action::ToolRect,
-        Action::ToolEllipse,
-        Action::ToolFree,
-        Action::ToolHighlighter,
-        Action::ToolNumber,
-    ] {
-        out.push(key(a));
+    for tool in [Tool::Arrow, Tool::Rect, Tool::Ellipse, Tool::Free, Tool::Highlighter, Tool::Number] {
+        out.push(button(Item::Tool(Some(tool))));
     }
     let colors = format!("{} … {}", bindings.get(Action::Color(0)).display(lang), bindings.get(Action::Color(9)).display(lang));
-    out.push(Line::Key(pick("Couleurs 1 à 10", "Colors 1 to 10"), colors));
-    out.push(key(Action::Undo));
-    out.push(key(Action::ExitDraw));
-    out.push(Line::Key(pick("Angle de 15°, carré, cercle", "15° angle, square, circle"), pick("Maj", "Shift")));
     out.extend([
         Line::Gap,
+        title("Pendant le dessin", "While drawing"),
+        Line::Key(pick("Couleurs 1 à 10", "Colors 1 to 10"), colors),
+        key(Action::Undo),
+        key(Action::ExitDraw),
+        Line::Key(pick("Angle de 15°, carré, cercle", "15° angle, square, circle"), pick("Maj", "Shift")),
+        Line::Gap,
         title("Barre d'outils", "Toolbar"),
+    ]);
+    for item in [
+        Item::Color,
+        Item::Width,
+        Item::Halo,
+        Item::Ripple,
+        Item::Trail,
+        Item::Pin,
+        Item::Clear,
+        Item::Settings,
+        Item::Help,
+        Item::Quit,
+    ] {
+        out.push(button(item));
+    }
+    out.extend([
         text("Glissez la barre par son logo ou un espace vide.", "Drag the bar by its logo or any empty space."),
         text("Double-clic sur le logo : replier ou déplier.", "Double-click the logo to collapse or expand."),
-        text("Le bouton à l'épingle garde les tracés à l'écran.", "The pin button keeps drawings on screen."),
-        text("Le bouton « ? » ouvre cette page.", "The \"?\" button opens this page."),
-        text("La croix, au bout de la barre, ferme Ekspointer.", "The cross at the end of the bar quits Ekspointer."),
         Line::Gap,
         title("Partage d'écran", "Screen sharing"),
         text("Partagez l'écran entier pour montrer les tracés.", "Share the entire screen to show drawings."),
@@ -161,6 +179,7 @@ mod tests {
             .map(|l| match l {
                 Line::Title(s) | Line::Text(s) | Line::Credit(s) => s.clone(),
                 Line::Link(label, _) => label.clone(),
+                Line::Button(_, label, key) => format!("{label} {}", key.clone().unwrap_or_default()),
                 Line::Key(label, key) => format!("{label} {key}"),
                 Line::Gap => String::new(),
             })
@@ -267,5 +286,31 @@ mod tests {
         assert_eq!(link_at(&ls, 0.0, center), None);
         let hidden = layout(&ls, scroll)[i].y - HEADER_H + 30.0;
         assert_eq!(link_at(&ls, scroll + hidden, crate::geom::Pt::new(center.x, HEADER_H - 5.0)), None);
+    }
+
+    #[test]
+    fn every_toolbar_button_is_explained_with_its_icon() {
+        use crate::ui::toolbar::{self, Item};
+        for lang in Lang::all() {
+            let b = Bindings::defaults();
+            let ls = lines(lang, &b, "1");
+            for (item, _) in toolbar::layout(false).items {
+                if matches!(item, Item::Logo | Item::Separator) {
+                    continue;
+                }
+                let found: Vec<_> = ls.iter().filter(|l| matches!(l, Line::Button(i, ..) if *i == item)).collect();
+                assert_eq!(found.len(), 1, "{item:?} en {lang:?}");
+                // Même nom et même raccourci que la bulle du bouton.
+                let (name, key) = toolbar::tooltip_in(item, &b, lang).unwrap();
+                assert_eq!(found[0], &Line::Button(item, name, key));
+            }
+        }
+    }
+
+    #[test]
+    fn help_mentions_the_wheel() {
+        let b = Bindings::defaults();
+        assert!(all_text(&lines(Lang::Fr, &b, "1")).contains("molette"));
+        assert!(all_text(&lines(Lang::En, &b, "1")).contains("wheel"));
     }
 }

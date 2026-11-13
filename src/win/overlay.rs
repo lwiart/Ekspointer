@@ -8,8 +8,10 @@ use ekspointer::app::App;
 use ekspointer::geom::{Pt, RectF};
 use ekspointer::input_filter::InputEvent;
 use windows::core::{w, Result, BOOL};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
+use windows::Win32::System::Threading::GetCurrentProcessId;
+use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, ScreenToClient, HDC, HMONITOR, MONITORINFO};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
@@ -97,8 +99,72 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 post(Msg::Input(InputEvent::StrokeEnd));
                 LRESULT(0)
             }
+            WM_MOUSEWHEEL | WM_MOUSEHWHEEL => {
+                // En mode dessin, la molette continue de faire défiler ce qui est sous les tracés.
+                forward_wheel(hwnd, msg, wparam, lparam);
+                LRESULT(0)
+            }
             _ => DefWindowProcW(hwnd, msg, wparam, lparam),
         }
+    }
+}
+
+/// Fenêtre d'une autre application située sous un point de l'écran : la première, dans
+/// l'ordre d'empilement sous `from`, qui est visible et contient le point.
+fn window_below(from: HWND, pt: POINT) -> Option<HWND> {
+    unsafe {
+        let me = GetCurrentProcessId();
+        let mut next = GetWindow(from, GW_HWNDNEXT).ok();
+        while let Some(hwnd) = next {
+            next = GetWindow(hwnd, GW_HWNDNEXT).ok();
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+            let ex = WINDOW_EX_STYLE(GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32);
+            let mut cloaked = 0u32;
+            let _ = DwmGetWindowAttribute(
+                hwnd,
+                DWMWA_CLOAKED,
+                &mut cloaked as *mut u32 as *mut core::ffi::c_void,
+                std::mem::size_of::<u32>() as u32,
+            );
+            let mut rect = RECT::default();
+            let usable = pid != me
+                && IsWindowVisible(hwnd).as_bool()
+                && !IsIconic(hwnd).as_bool()
+                && !ex.contains(WS_EX_TRANSPARENT)
+                && cloaked == 0
+                && GetWindowRect(hwnd, &mut rect).is_ok()
+                && pt.x >= rect.left
+                && pt.x < rect.right
+                && pt.y >= rect.top
+                && pt.y < rect.bottom;
+            if usable {
+                return Some(hwnd);
+            }
+        }
+        None
+    }
+}
+
+/// Transmet un cran de molette à la fenêtre située sous la fenêtre de dessin.
+fn forward_wheel(overlay: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) {
+    let pos = lparam.0 as u32;
+    let pt = POINT { x: (pos & 0xFFFF) as u16 as i16 as i32, y: ((pos >> 16) & 0xFFFF) as u16 as i16 as i32 };
+    let Some(mut target) = window_below(overlay, pt) else {
+        return;
+    };
+    unsafe {
+        // Descend jusqu'à la zone de la fenêtre qui se trouve sous le curseur (liste, page web…).
+        for _ in 0..16 {
+            let mut client = pt;
+            let _ = ScreenToClient(target, &mut client);
+            let child = ChildWindowFromPointEx(target, client, CWP_SKIPINVISIBLE | CWP_SKIPDISABLED | CWP_SKIPTRANSPARENT);
+            if child.0.is_null() || child == target {
+                break;
+            }
+            target = child;
+        }
+        let _ = PostMessageW(Some(target), msg, wparam, lparam);
     }
 }
 

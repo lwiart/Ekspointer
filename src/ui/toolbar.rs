@@ -159,12 +159,12 @@ pub fn tooltip_in(item: Item, bindings: &Bindings, lang: Lang) -> Option<(String
         Item::Color => (if fr { "Couleur" } else { "Color" }, None),
         Item::Width => (if fr { "Épaisseur" } else { "Thickness" }, None),
         Item::Halo => ("Halo", key(Action::ToggleHalo)),
-        Item::Ripple => (if fr { "Onde au clic" } else { "Click ripple" }, None),
-        Item::Trail => (if fr { "Traînée laser" } else { "Laser trail" }, None),
-        Item::Pin => (if fr { "Garder les tracés à l'écran" } else { "Keep drawings on screen" }, None),
+        Item::Ripple => (if fr { "Onde au clic" } else { "Click ripple" }, key(Action::ToggleRipple)),
+        Item::Trail => (if fr { "Traînée laser" } else { "Laser trail" }, key(Action::ToggleTrail)),
+        Item::Pin => (if fr { "Garder les tracés à l'écran" } else { "Keep drawings on screen" }, key(Action::TogglePin)),
         Item::Clear => (Action::ClearAll.label_in(lang), key(Action::ClearAll)),
-        Item::Settings => (crate::i18n::t(lang, crate::i18n::Text::Settings), None),
-        Item::Help => (crate::i18n::t(lang, crate::i18n::Text::Help), None),
+        Item::Settings => (crate::i18n::t(lang, crate::i18n::Text::Settings), key(Action::OpenSettings)),
+        Item::Help => (crate::i18n::t(lang, crate::i18n::Text::Help), key(Action::OpenHelp)),
         Item::Quit => (if fr { "Quitter Ekspointer" } else { "Quit Ekspointer" }, None),
         Item::Separator => return None,
     };
@@ -282,13 +282,13 @@ mod tests {
         assert_eq!(t(Item::Tool(None)), Some(("Curseur".into(), Some("Échap".into()))));
         assert_eq!(t(Item::Clear), Some(("Tout effacer".into(), Some("Ctrl+Alt+E".into()))));
         assert_eq!(t(Item::Halo), Some(("Halo".into(), Some("Ctrl+Alt+H".into()))));
-        assert_eq!(t(Item::Pin), Some(("Garder les tracés à l'écran".into(), None)));
-        assert_eq!(t(Item::Ripple), Some(("Onde au clic".into(), None)));
-        assert_eq!(t(Item::Trail), Some(("Traînée laser".into(), None)));
+        assert_eq!(t(Item::Pin), Some(("Garder les tracés à l'écran".into(), Some("Ctrl+Alt+G".into()))));
+        assert_eq!(t(Item::Ripple), Some(("Onde au clic".into(), Some("Ctrl+Alt+O".into()))));
+        assert_eq!(t(Item::Trail), Some(("Traînée laser".into(), Some("Ctrl+Alt+T".into()))));
         assert_eq!(t(Item::Color), Some(("Couleur".into(), None)));
         assert_eq!(t(Item::Width), Some(("Épaisseur".into(), None)));
-        assert_eq!(t(Item::Settings), Some(("Réglages".into(), None)));
-        assert_eq!(t(Item::Help), Some(("Aide".into(), None)));
+        assert_eq!(t(Item::Settings), Some(("Réglages".into(), Some("Ctrl+Alt+R".into()))));
+        assert_eq!(t(Item::Help), Some(("Aide".into(), Some("Ctrl+Alt+A".into()))));
         assert_eq!(t(Item::Separator), None);
     }
 
@@ -325,12 +325,12 @@ mod tests {
         assert_eq!(t(Item::Tool(None)), Some(("Cursor".into(), Some("Esc".into()))));
         assert_eq!(t(Item::Tool(Some(Tool::Free))), Some(("Freehand".into(), Some("D".into()))));
         assert_eq!(t(Item::Clear), Some(("Clear all".into(), Some("Ctrl+Alt+E".into()))));
-        assert_eq!(t(Item::Ripple), Some(("Click ripple".into(), None)));
-        assert_eq!(t(Item::Trail), Some(("Laser trail".into(), None)));
-        assert_eq!(t(Item::Pin), Some(("Keep drawings on screen".into(), None)));
+        assert_eq!(t(Item::Ripple), Some(("Click ripple".into(), Some("Ctrl+Alt+O".into()))));
+        assert_eq!(t(Item::Trail), Some(("Laser trail".into(), Some("Ctrl+Alt+T".into()))));
+        assert_eq!(t(Item::Pin), Some(("Keep drawings on screen".into(), Some("Ctrl+Alt+G".into()))));
         assert_eq!(t(Item::Width), Some(("Thickness".into(), None)));
-        assert_eq!(t(Item::Settings), Some(("Settings".into(), None)));
-        assert_eq!(t(Item::Help), Some(("Help".into(), None)));
+        assert_eq!(t(Item::Settings), Some(("Settings".into(), Some("Ctrl+Alt+R".into()))));
+        assert_eq!(t(Item::Help), Some(("Help".into(), Some("Ctrl+Alt+A".into()))));
         assert_eq!(tooltip_in(Item::Clear, &b, Lang::Fr), tooltip(Item::Clear, &b));
     }
 
