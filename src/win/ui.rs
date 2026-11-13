@@ -29,6 +29,8 @@ pub enum UiAction {
     ToggleSettings,
     /// Ouvrir la page d'aide.
     OpenHelp,
+    /// Fermer Ekspointer.
+    Quit,
     /// Le survol a changé : armer le minuteur de la bulle d'aide.
     ArmTooltip,
 }
@@ -307,6 +309,7 @@ impl Ui {
                 self.close_floating();
                 out.push(UiAction::OpenHelp);
             }
+            Item::Quit => out.push(UiAction::Quit),
             Item::Logo | Item::Separator => {}
         }
         Ok(())

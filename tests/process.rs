@@ -20,8 +20,21 @@ struct Sandbox {
     children: Vec<Child>,
 }
 
+/// Vrai si un Ekspointer tourne déjà sur le poste (sa fenêtre principale existe).
+fn another_instance_is_running() -> bool {
+    use windows::core::w;
+    use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
+    unsafe { FindWindowW(w!("EkspointerMain"), None).is_ok_and(|h| !h.0.is_null()) }
+}
+
 impl Sandbox {
     fn new() -> Sandbox {
+        // Sans ce garde-fou, le test se terminerait aussitôt (second lancement) et son --quit
+        // fermerait l'Ekspointer de l'utilisateur.
+        assert!(
+            !another_instance_is_running(),
+            "Ekspointer est déjà lancé sur ce poste : fermez-le avant de lancer ces tests"
+        );
         static N: AtomicU32 = AtomicU32::new(0);
         let dir = std::env::temp_dir().join(format!(
             "ekspointer-proc-{}-{}",
@@ -231,4 +244,16 @@ fn global_shortcut_goes_through_the_real_keyboard_hook() {
 
     s.run(&["--quit"], QUICK);
     assert_eq!(s.wait(first, SHUTDOWN).expect("l'instance ne s'est pas fermée").code(), Some(0));
+}
+
+#[test]
+#[ignore = "lance le vrai exécutable"]
+fn quit_button_of_the_toolbar_closes_the_application() {
+    // `--demo-ui=quit` clique sur la croix de la barre, par le même chemin que la souris.
+    let mut s = Sandbox::new();
+    let child = Command::new(&s.exe).args(["--demo-ui=quit", "--capturable"]).spawn().unwrap();
+    s.children.push(child);
+    let status = s.wait(0, Duration::from_secs(5)).expect("la croix n'a pas fermé l'application");
+    assert_eq!(status.code(), Some(0));
+    assert!(!s.file("ekspointer.log").exists(), "une erreur a été journalisée");
 }

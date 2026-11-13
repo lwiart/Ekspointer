@@ -342,3 +342,4 @@ Ces points remplacent ce que les sections précédentes en disaient.
 - **Barre d'outils** : elle se déplace en la glissant par n'importe quel endroit qui n'est pas un bouton (logo, filets, marges, espaces). Pendant le déplacement elle est réduite de moitié, le point saisi restant sous le curseur ; elle reprend sa taille au relâchement.
 - **Bouton à l'épingle** : sa bulle dit « Garder les tracés à l'écran ».
 - **Installateur** : en français ou en anglais, selon la langue de Windows.
+- **Bouton Quitter** (version 0.2.1) : une croix au bout de la barre d'outils, séparée des autres boutons par un filet, ferme Ekspointer. Le menu de la zone de notification garde aussi son entrée « Quitter ».

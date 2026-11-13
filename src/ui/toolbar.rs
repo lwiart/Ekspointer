@@ -41,6 +41,8 @@ pub enum Item {
     Settings,
     /// Ouvre la page d'aide.
     Help,
+    /// Ferme Ekspointer.
+    Quit,
     Separator,
 }
 
@@ -86,6 +88,7 @@ fn groups() -> Vec<Vec<Item>> {
         vec![Item::Color, Item::Width],
         vec![Item::Halo, Item::Ripple, Item::Trail],
         vec![Item::Pin, Item::Clear, Item::Settings, Item::Help],
+        vec![Item::Quit],
     ]
 }
 
@@ -162,6 +165,7 @@ pub fn tooltip_in(item: Item, bindings: &Bindings, lang: Lang) -> Option<(String
         Item::Clear => (Action::ClearAll.label_in(lang), key(Action::ClearAll)),
         Item::Settings => (crate::i18n::t(lang, crate::i18n::Text::Settings), None),
         Item::Help => (crate::i18n::t(lang, crate::i18n::Text::Help), None),
+        Item::Quit => (if fr { "Quitter Ekspointer" } else { "Quit Ekspointer" }, None),
         Item::Separator => return None,
     };
     Some((name.to_string(), shortcut))
@@ -231,10 +235,11 @@ mod tests {
                 Item::Pin,
                 Item::Clear,
                 Item::Settings,
-                Item::Help
+                Item::Help,
+                Item::Quit
             ]
         );
-        assert_eq!(l.items.iter().filter(|(i, _)| *i == Item::Separator).count(), 4);
+        assert_eq!(l.items.iter().filter(|(i, _)| *i == Item::Separator).count(), 5);
         for (i, r) in &l.items {
             if !matches!(i, Item::Separator) {
                 assert_eq!((r.w, r.h), (40.0, 40.0), "{i:?}");
@@ -355,5 +360,21 @@ mod tests {
         assert_eq!(drag_origin((1000, 500), (200, 40), 1.0), (800, 460));
         assert_eq!(drag_origin((1000, 500), (200, 40), DRAG_SHRINK), (900, 480));
         assert_eq!(drag_origin((-50, 10), (0, 0), DRAG_SHRINK), (-50, 10));
+    }
+
+    #[test]
+    fn quit_button_closes_the_bar_at_its_far_end() {
+        use crate::i18n::Lang;
+        let l = layout(false);
+        // Dernier élément, isolé des autres boutons par un filet pour éviter un clic par mégarde.
+        let n = l.items.len();
+        assert_eq!(l.items[n - 1].0, Item::Quit);
+        assert_eq!(l.items[n - 2].0, Item::Separator);
+        assert!(!l.is_handle(Pt::new(l.rect(Item::Quit).unwrap().x + 20.0, 28.0)));
+        let b = Bindings::defaults();
+        assert_eq!(tooltip(Item::Quit, &b), Some(("Quitter Ekspointer".into(), None)));
+        assert_eq!(tooltip_in(Item::Quit, &b, Lang::En), Some(("Quit Ekspointer".into(), None)));
+        // Repliée, la barre ne montre que son logo.
+        assert!(layout(true).rect(Item::Quit).is_none());
     }
 }

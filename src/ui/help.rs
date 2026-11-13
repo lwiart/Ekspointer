@@ -78,6 +78,7 @@ pub fn lines(lang: Lang, bindings: &Bindings, version: &str) -> Vec<Line> {
         text("Double-clic sur le logo : replier ou déplier.", "Double-click the logo to collapse or expand."),
         text("Le bouton à l'épingle garde les tracés à l'écran.", "The pin button keeps drawings on screen."),
         text("Le bouton « ? » ouvre cette page.", "The \"?\" button opens this page."),
+        text("La croix, au bout de la barre, ferme Ekspointer.", "The cross at the end of the bar quits Ekspointer."),
         Line::Gap,
         title("Partage d'écran", "Screen sharing"),
         text("Partagez l'écran entier pour montrer les tracés.", "Share the entire screen to show drawings."),

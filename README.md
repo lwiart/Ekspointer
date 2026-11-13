@@ -21,7 +21,7 @@ La version portable (`Ekspointer-x.y.z-portable.exe`) fonctionne sans installati
 
 ## Utilisation
 
-Une barre d'outils flottante apparaît en haut de l'écran. Glissez-la par son logo ou par n'importe quel espace entre les boutons (elle rétrécit le temps du déplacement) ; double-cliquez sur le logo pour la replier.
+Une barre d'outils flottante apparaît en haut de l'écran. Glissez-la par son logo ou par n'importe quel espace entre les boutons (elle rétrécit le temps du déplacement) ; double-cliquez sur le logo pour la replier. La croix, au bout de la barre, ferme Ekspointer (le menu de l'icône de la zone de notification propose aussi « Quitter »).
 
 Il y a deux façons de dessiner :
 

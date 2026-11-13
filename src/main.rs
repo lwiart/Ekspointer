@@ -58,7 +58,7 @@ struct Args {
     /// Demande à l'instance en cours de se fermer.
     quit: bool,
     /// Met l'interface dans un état donné, pour les vérifications visuelles :
-    /// `popover`, `tooltip`, `settings`, `help`, `conflict`, `collapsed` ou `drawing`.
+    /// `popover`, `tooltip`, `settings`, `help`, `conflict`, `collapsed`, `drawing` ou `quit`.
     demo_ui: Option<String>,
     /// Force la langue de l'interface (`fr` ou `en`), pour les vérifications visuelles.
     lang: Option<Lang>,
@@ -347,6 +347,9 @@ impl Shell {
                 UiAction::Command(cmd) => self.command(cmd, now),
                 UiAction::ToggleSettings => self.toggle_settings(),
                 UiAction::OpenHelp => self.open_settings(Tab::Help),
+                UiAction::Quit => unsafe {
+                    let _ = DestroyWindow(self.main);
+                },
                 UiAction::ArmTooltip => unsafe {
                     SetTimer(Some(self.main), TIMER_TOOLTIP, TIP_DELAY_MS as u32, None);
                 },
@@ -583,6 +586,7 @@ fn demo_ui(shell: &mut Shell, name: &str) {
             click(Item::Pin);
         }
         "collapsed" => shell.command(UiCommand::SetToolbarCollapsed(true), 0),
+        "quit" => click(Item::Quit),
         "keytool" => {
             use ekspointer::shortcuts::Action;
             win::post(Msg::Input(InputEvent::Action(Action::ToggleDraw)));

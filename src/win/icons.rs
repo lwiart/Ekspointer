@@ -127,6 +127,10 @@ pub fn draw(p: &Painter, item: Item, r: RectF, color: Rgba) {
             g.ring((12.0, 12.0), 8.5, color);
             p.text("?", Family::Mono, 12.0 * g.k(), 700, Align::Center, r, color);
         }
+        Item::Quit => {
+            g.line((6.5, 6.5), (17.5, 17.5));
+            g.line((17.5, 6.5), (6.5, 17.5));
+        }
         Item::Logo | Item::Color | Item::Separator => {}
     }
 }
