@@ -41,6 +41,8 @@ pub enum Msg {
     Timer(usize),
     /// Un second lancement demande d'afficher la barre.
     ShowToolbar,
+    /// Un cran de molette traverse les fenêtres de dessin : il faudra rétablir leur capture.
+    WheelPass,
     /// Un réglage de Windows a changé (par exemple « Afficher les animations »).
     SystemSettingsChanged,
     /// Événement de souris d'un panneau de l'interface.

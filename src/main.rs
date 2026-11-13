@@ -60,6 +60,10 @@ const TIMER_TOOLTIP: usize = 3;
 
 /// Minuteur unique, peu après le démarrage : rend au système la mémoire qui n'a servi qu'à l'initialisation.
 const TIMER_TRIM: usize = 5;
+/// Minuteur de fin de défilement à la molette en mode dessin.
+const TIMER_WHEEL: usize = 6;
+/// Délai sans cran de molette au bout duquel les fenêtres de dessin captent de nouveau la souris.
+const WHEEL_PASS_MS: u32 = 200;
 /// Délai de ce minuteur, en millisecondes.
 const TRIM_DELAY_MS: u32 = 3000;
 /// Minuteur d'effacement du message de conflit de raccourci.
@@ -391,7 +395,7 @@ impl Shell {
 
     fn handle(&mut self, msg: Msg, now: u64) {
         // Un simple mouvement ou clic de souris ne change pas les formes ; tout le reste le peut.
-        if !matches!(msg, Msg::Input(InputEvent::PointerMove(_) | InputEvent::Click(..))) {
+        if !matches!(msg, Msg::Input(InputEvent::PointerMove(_) | InputEvent::Click(..)) | Msg::WheelPass) {
             self.shapes_dirty = true;
         }
         match msg {
@@ -435,6 +439,15 @@ impl Shell {
                 self.settings_actions(actions, now);
             }
             Msg::Timer(TIMER_CONFLICT) => self.settings.expire(now),
+            Msg::WheelPass => unsafe {
+                // Chaque cran repousse l'échéance : la capture revient quand le défilement s'arrête.
+                SetTimer(Some(self.main), TIMER_WHEEL, WHEEL_PASS_MS, None);
+            },
+            Msg::Timer(TIMER_WHEEL) => {
+                self.overlays.end_wheel_pass();
+                self.ui.raise();
+                self.settings.panel.raise();
+            }
             Msg::Timer(TIMER_TRIM) => unsafe {
                 // Les bibliothèques graphiques touchent beaucoup de mémoire à l'initialisation, qui ne
                 // resservira pas : Windows la reprend, et ne recharge ensuite que ce qui est réellement utilisé.

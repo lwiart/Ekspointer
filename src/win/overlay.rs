@@ -7,6 +7,8 @@ use super::{post, Msg};
 use ekspointer::app::App;
 use ekspointer::geom::{Pt, RectF};
 use ekspointer::input_filter::InputEvent;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use windows::core::{w, Result, BOOL};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
@@ -18,6 +20,34 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 const CLASS: windows::core::PCWSTR = w!("EkspointerOverlay");
+
+/// Fenêtres de dessin, pour le fil des écoutes (qui doit agir avant que Windows ne choisisse
+/// la fenêtre destinataire d'un cran de molette).
+static HWNDS: Mutex<Vec<isize>> = Mutex::new(Vec::new());
+/// Les fenêtres de dessin captent la souris (mode dessin).
+static CAPTURING: AtomicBool = AtomicBool::new(false);
+/// Les fenêtres de dessin se laissent traverser le temps d'un défilement à la molette.
+static WHEEL_PASS: AtomicBool = AtomicBool::new(false);
+
+/// Appelé par l'écoute de la souris à chaque cran de molette, avant que Windows ne le livre.
+///
+/// En mode dessin, rend les fenêtres de dessin traversables : le cran atteint alors
+/// l'application située dessous par le chemin normal de Windows, quelle qu'elle soit. Renvoie
+/// vrai s'il faudra rétablir la capture une fois le défilement terminé.
+pub fn wheel_pass_begin() -> bool {
+    if !CAPTURING.load(Ordering::SeqCst) {
+        return false;
+    }
+    if !WHEEL_PASS.swap(true, Ordering::SeqCst) {
+        let hwnds = HWNDS.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        for h in hwnds {
+            unsafe {
+                SetWindowLongPtrW(HWND(h as *mut core::ffi::c_void), GWL_EXSTYLE, ex_style(false).0 as isize);
+            }
+        }
+    }
+    true
+}
 
 /// Un écran et sa fenêtre de dessin.
 struct Overlay {
@@ -100,7 +130,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 LRESULT(0)
             }
             WM_MOUSEWHEEL | WM_MOUSEHWHEEL => {
-                // En mode dessin, la molette continue de faire défiler ce qui est sous les tracés.
+                // Filet de sécurité : normalement la fenêtre s'est laissée traverser avant de
+                // recevoir ce cran (voir `wheel_pass_begin`). S'il arrive quand même ici, on le
+                // retransmet à la fenêtre située dessous.
                 forward_wheel(hwnd, msg, wparam, lparam);
                 LRESULT(0)
             }
@@ -221,12 +253,22 @@ impl Overlays {
                 self.list.push(Overlay { hwnd, surface, rect, scale, blank: false, halo_last: false });
             }
         }
+        *HWNDS.lock().unwrap_or_else(|p| p.into_inner()) = self.list.iter().map(|o| o.hwnd.0 as isize).collect();
         Ok(())
+    }
+
+    /// Fin d'un défilement à la molette : les fenêtres de dessin captent de nouveau la souris.
+    pub fn end_wheel_pass(&mut self) {
+        if WHEEL_PASS.load(Ordering::SeqCst) {
+            self.set_capture(self.capture);
+        }
     }
 
     /// Fait capter la souris aux fenêtres (mode dessin) ou la leur fait traverser.
     pub fn set_capture(&mut self, on: bool) {
         self.capture = on;
+        CAPTURING.store(on, Ordering::SeqCst);
+        WHEEL_PASS.store(false, Ordering::SeqCst);
         for o in &self.list {
             unsafe {
                 SetWindowLongPtrW(o.hwnd, GWL_EXSTYLE, ex_style(on).0 as isize);

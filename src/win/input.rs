@@ -126,6 +126,11 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
             WM_RBUTTONUP => Some(MouseKind::RightUp),
             _ => None,
         };
+        // Molette en mode dessin : les fenêtres de dessin se laissent traverser avant que
+        // Windows ne choisisse à qui livrer ce cran.
+        if matches!(wparam.0 as u32, WM_MOUSEWHEEL | WM_MOUSEHWHEEL) && super::overlay::wheel_pass_begin() {
+            post(Msg::WheelPass);
+        }
         if let Some(kind) = kind {
             let p = Pt::new(info.pt.x as f32, info.pt.y as f32);
             if dispatch(with_filter(|f| f.on_mouse(kind, p))) {
