@@ -138,3 +138,7 @@ The Instrument Sans and Noto Sans Mono fonts are embedded under the OFL license 
 ## Credits
 
 Ekspointer is created by Laurent Wiart, [Eksplodo](https://eksplodo.fr/): training and consulting in automation and AI.
+
+## License
+
+Ekspointer is released under the [MIT License](LICENSE). The embedded fonts keep their own license, the SIL Open Font License (`assets/fonts/`).

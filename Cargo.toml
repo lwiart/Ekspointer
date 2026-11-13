@@ -4,6 +4,7 @@ version = "0.3.4"
 edition = "2021"
 description = "Mise en évidence du pointeur et annotations éphémères à l'écran"
 authors = ["Eksplodo"]
+license = "MIT"
 publish = false
 
 [lib]
