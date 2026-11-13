@@ -100,13 +100,29 @@ To quit, click the cross at the end of the toolbar, or right-click the Ekspointe
 
 You need [Rust](https://rustup.rs/), the Visual Studio Build Tools with the C++ tools, and [Inno Setup 6](https://jrsoftware.org/isinfo.php) for the installer.
 
+Run the commands from the project folder.
+
+In PowerShell or the Windows command prompt:
+
 ```powershell
+scripts\cargo.cmd build --release                                     # the executable only, in target\release\
 scripts\cargo.cmd test                                                # unit and integration tests
 scripts\cargo.cmd test --test process -- --ignored --test-threads=1   # tests that run the real executable
 powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1    # everything, output in dist\
 ```
 
-`scripts\cargo.cmd` runs `cargo` inside the Visual Studio build environment. The tests that run the real executable open windows briefly, move the pointer for a second and send a few keystrokes.
+In Git Bash:
+
+```bash
+cmd //c "scripts\\cargo.cmd build --release"                                     # the executable only, in target/release/
+cmd //c "scripts\\cargo.cmd test"                                                # unit and integration tests
+cmd //c "scripts\\cargo.cmd test --test process -- --ignored --test-threads=1"   # tests that run the real executable
+powershell -ExecutionPolicy Bypass -File scripts/build-release.ps1               # everything, output in dist/
+```
+
+`scripts\cargo.cmd` runs `cargo` inside the Visual Studio build environment. In Git Bash, write `cmd //c` with two slashes (a single `/c` is turned into a path), and do not call `cargo` directly: Git Bash has its own `link` command, which hides the Visual Studio linker.
+
+The last command runs the tests, builds the executable, then creates the installer and the portable executable. The tests that run the real executable open windows briefly, move the pointer for a second and send a few keystrokes.
 
 The icon and the installer images are generated from `assets/logo.svg` with `scripts\cargo.cmd run -p icon-gen`.
 
