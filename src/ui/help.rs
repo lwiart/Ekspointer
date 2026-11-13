@@ -15,8 +15,8 @@ pub const COMPANY: &str = "Eksplodo";
 pub const SITE: &str = "eksplodo.fr";
 /// Adresse ouverte par le lien des crédits.
 pub const SITE_URL: &str = "https://eksplodo.fr/";
-/// Largeur de la zone cliquable d'un lien, centrée sur sa ligne.
-const LINK_W: f32 = 150.0;
+/// Largeur de la zone cliquable d'un lien, au début de sa ligne.
+const LINK_W: f32 = 100.0;
 
 /// Ligne de la page d'aide.
 #[derive(Clone, PartialEq, Debug)]
@@ -25,11 +25,11 @@ pub enum Line {
     Text(String),
     /// Libellé d'une action et son raccourci actuel.
     Key(String, String),
-    /// Ligne de crédit, centrée.
+    /// Ligne de crédit.
     Credit(String),
     /// Bouton de la barre d'outils : son icône, son nom et, s'il en a un, son raccourci.
     Button(Item, String, Option<String>),
-    /// Lien cliquable, centré : texte affiché et adresse ouverte dans le navigateur.
+    /// Lien cliquable : texte affiché et adresse ouverte dans le navigateur.
     Link(String, &'static str),
     Gap,
 }
@@ -139,9 +139,9 @@ pub fn layout(lines: &[Line], scroll: f32) -> Vec<RectF> {
         .collect()
 }
 
-/// Zone cliquable d'un lien : le milieu de sa ligne, pas la ligne entière.
+/// Zone cliquable d'un lien : le début de sa ligne, pas la ligne entière.
 pub fn link_rect(line: RectF) -> RectF {
-    RectF { x: line.x + (line.w - LINK_W) / 2.0, y: line.y, w: LINK_W, h: line.h }
+    RectF { x: line.x, y: line.y, w: LINK_W, h: line.h }
 }
 
 /// Adresse du lien sous un point, s'il y en a un (et s'il n'est pas caché sous l'en-tête).
@@ -280,8 +280,10 @@ mod tests {
         assert!(r.w < PANEL_W - 2.0 * PAD, "la zone cliquable se limite au lien, pas à toute la ligne");
         let center = crate::geom::Pt::new(r.x + r.w / 2.0, r.y + r.h / 2.0);
         assert_eq!(link_at(&ls, scroll, center), Some(SITE_URL));
+        // Le lien est aligné à gauche, comme le reste des crédits.
+        assert_eq!(r.x, PAD);
         // À côté du lien, sur une autre ligne, ou quand la ligne est cachée sous l'en-tête : rien.
-        assert_eq!(link_at(&ls, scroll, crate::geom::Pt::new(PAD + 2.0, center.y)), None);
+        assert_eq!(link_at(&ls, scroll, crate::geom::Pt::new(PANEL_W - PAD - 2.0, center.y)), None);
         assert_eq!(link_at(&ls, scroll, crate::geom::Pt::new(center.x, center.y - 60.0)), None);
         assert_eq!(link_at(&ls, 0.0, center), None);
         let hidden = layout(&ls, scroll)[i].y - HEADER_H + 30.0;

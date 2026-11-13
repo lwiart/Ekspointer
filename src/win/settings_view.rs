@@ -420,10 +420,10 @@ fn draw_help_line(p: &Painter, line: &Line, r: RectF, hover_link: bool, color: u
             }
             p.text(label, Family::Body, 13.0, 500, Align::Left, RectF { x: r.x + 34.0, w: r.w - 34.0, ..r }, theme::INK);
             if let Some(key) = key {
-                let w = p.gfx.text_width(key, Family::Mono, 11.0, 600) + 20.0;
+                let w = p.gfx.text_width(key, Family::Body, 11.0, 600) + 20.0;
                 let pill = RectF { x: r.x + r.w - w, y: r.y + 3.0, w, h: r.h - 6.0 };
                 p.fill_rrect(pill, pill.h / 2.0, SURFACE);
-                p.text(key, Family::Mono, 11.0, 600, Align::Center, pill, theme::INK);
+                p.text(key, Family::Body, 11.0, 600, Align::Center, pill, theme::INK);
             }
         }
         Line::Link(label, _) => {
@@ -431,28 +431,28 @@ fn draw_help_line(p: &Painter, line: &Line, r: RectF, hover_link: bool, color: u
             let zone = help::link_rect(r);
             let w = p.gfx.text_width(label, Family::Body, 13.5, 600);
             if hover_link {
-                let pill = RectF { x: zone.x + (zone.w - w) / 2.0 - 12.0, y: zone.y + 1.0, w: w + 24.0, h: zone.h - 2.0 };
+                let pill = RectF { x: zone.x - 8.0, y: zone.y + 1.0, w: w + 16.0, h: zone.h - 2.0 };
                 p.fill_rrect(pill, pill.h / 2.0, theme::HOVER);
             }
-            p.text(label, Family::Body, 13.5, 600, Align::Center, zone, theme::BLUE);
-            let (x, y) = (zone.x + (zone.w - w) / 2.0, zone.y + zone.h / 2.0 + 9.0);
+            p.text(label, Family::Body, 13.5, 600, Align::Left, zone, theme::BLUE);
+            let (x, y) = (zone.x, zone.y + zone.h / 2.0 + 9.0);
             p.line(Pt::new(x, y), Pt::new(x + w, y), theme::BLUE, 1.0, false);
         }
         Line::Title(text) => {
             let upper = text.to_uppercase();
-            p.text(&upper, Family::Mono, 11.0, 600, Align::Left, RectF { y: r.y + 10.0, h: r.h - 10.0, ..r }, theme::BLUE);
+            p.text(&upper, Family::Body, 11.0, 600, Align::Left, RectF { y: r.y + 10.0, h: r.h - 10.0, ..r }, theme::BLUE);
         }
         Line::Text(text) => p.text(text, Family::Body, 13.0, 400, Align::Left, r, theme::MUTED),
         Line::Credit(text) => {
             let weight = if text.starts_with("Ekspointer") { 700 } else { 500 };
-            p.text(text, Family::Body, 13.5, weight, Align::Center, r, theme::INK);
+            p.text(text, Family::Body, 13.5, weight, Align::Left, r, theme::INK);
         }
         Line::Key(label, key) => {
             p.text(label, Family::Body, 13.0, 500, Align::Left, r, theme::INK);
-            let w = p.gfx.text_width(key, Family::Mono, 11.0, 600) + 20.0;
+            let w = p.gfx.text_width(key, Family::Body, 11.0, 600) + 20.0;
             let pill = RectF { x: r.x + r.w - w, y: r.y + 3.0, w, h: r.h - 6.0 };
             p.fill_rrect(pill, pill.h / 2.0, SURFACE);
-            p.text(key, Family::Mono, 11.0, 600, Align::Center, pill, theme::INK);
+            p.text(key, Family::Body, 11.0, 600, Align::Center, pill, theme::INK);
         }
         Line::Gap => {}
     }
@@ -473,7 +473,7 @@ fn draw_slider(p: &Painter, row: RectF, value: i32, min: i32, max: i32, text: &s
     p.fill_circle(Pt::new(x, y), 8.0, theme::BG);
     p.stroke_ellipse(Pt::new(x, y), 8.0, 8.0, theme::INK, 1.75);
     let value_rect = RectF { x: track.x + track.w + 8.0, y: row.y, w: 46.0, h: row.h };
-    p.text(text, Family::Mono, 12.0, 500, Align::Right, value_rect, theme::MUTED);
+    p.text(text, Family::Body, 12.0, 500, Align::Right, value_rect, theme::MUTED);
 }
 
 /// Segment sélectionné d'un contrôle à plusieurs positions.
@@ -496,7 +496,7 @@ fn draw_row(
     let lang = app.cfg.language;
     if matches!(row, Row::Header(_)) {
         let text = row.label_in(lang).to_uppercase();
-        p.text(&text, Family::Mono, 11.0, 600, Align::Left, RectF { x: r.x, y: r.y + 14.0, w: r.w, h: r.h - 14.0 }, theme::BLUE);
+        p.text(&text, Family::Body, 11.0, 600, Align::Left, RectF { x: r.x, y: r.y + 14.0, w: r.w, h: r.h - 14.0 }, theme::BLUE);
         // Filet au-dessus de chaque section, sauf la première, déjà sous l'en-tête du panneau.
         if !first {
             p.line(Pt::new(r.x, r.y + 8.5), Pt::new(r.x + r.w, r.y + 8.5), theme::LINE, 1.0, false);
@@ -577,7 +577,7 @@ fn draw_row(
                         draw_selected_segment(p, s);
                     }
                     let color = if selected { theme::WHITE } else { theme::MUTED };
-                    p.text(text, Family::Mono, 10.0, 600, Align::Center, s, color);
+                    p.text(text, Family::Body, 10.0, 600, Align::Center, s, color);
                 }
             }
             p.fill_rrect(pill, pill.h / 2.0, if hover || active.is_some() { theme::HOVER } else { SURFACE });
@@ -586,7 +586,7 @@ fn draw_row(
                 let prompt = t(lang, if double { Text::TypeKey } else { Text::TypeShortcut });
                 p.text(prompt, Family::Body, 11.0, 600, Align::Center, pill, theme::BLUE);
             } else {
-                p.text(&shortcut.display(lang), Family::Mono, 11.5, 600, Align::Center, pill, theme::INK);
+                p.text(&shortcut.display(lang), Family::Body, 11.5, 600, Align::Center, pill, theme::INK);
             }
         }
         Row::Header(_) | Row::ResetBindings => {}
